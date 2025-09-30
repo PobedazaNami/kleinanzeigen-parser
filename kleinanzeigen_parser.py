@@ -935,11 +935,8 @@ class KleinanzeigenParser:
         try:
             self.logger.info("Запуск одного цикла парсинга...")
             
-            # Здесь должен быть код парсинга
-            for url in self.config.get('search_urls', []):
-                self.logger.info(f"Парсинг URL: {url}")
-                # Имитация работы парсера
-                time.sleep(2)
+            # Выполняем реальный парсинг
+            self.parse_listings()
             
             self.logger.info("Цикл парсинга завершен")
             

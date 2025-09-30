@@ -38,7 +38,7 @@ class KleinanzeigenParser:
         
         # Настройка логирования (после установки путей)
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,  # Включаем debug логи
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(self.log_path, encoding='utf-8'),
@@ -48,6 +48,22 @@ class KleinanzeigenParser:
         self.logger = logging.getLogger(__name__)
         
         self.session = requests.Session()
+        
+        # Настройка прокси
+        if self.config.get('anti_detection', {}).get('use_proxy'):
+            proxy_config = self.config['anti_detection']
+            proxy_url = proxy_config.get('proxy_url')
+            proxy_auth = proxy_config.get('proxy_auth')
+            
+            if proxy_url and proxy_auth:
+                # Формируем полный URL прокси с авторизацией
+                proxy_with_auth = proxy_url.replace('://', f"://{proxy_auth['username']}:{proxy_auth['password']}@")
+                self.session.proxies = {
+                    'http': proxy_with_auth,
+                    'https': proxy_with_auth
+                }
+                self.logger.info(f"Настроен прокси: {proxy_url}")
+        
         # Более актуальный User-Agent
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -61,16 +77,20 @@ class KleinanzeigenParser:
         
         self.session.headers.update({
             'User-Agent': selected_ua,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0'
+            'Cache-Control': 'max-age=0',
+            'sec-ch-ua': '"Google Chrome";v="120", "Chromium";v="120", "Not=A?Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'DNT': '1'
         })
         
         # Инициализация базы данных
@@ -710,10 +730,27 @@ class KleinanzeigenParser:
         for indicator in blocking_indicators:
             if indicator in text_lower:
                 self.logger.warning(f"Обнаружен индикатор блокировки: {indicator}")
+                # Выводим часть ответа для отладки
+                self.logger.debug(f"Первые 500 символов ответа: {response_text[:500]}")
                 self.send_status_notification("BLOCKED", f"Индикатор: {indicator}, URL: {url}")
                 return True
                 
         return False
+    
+    def get_initial_cookies(self):
+        """Получение начальных cookies с главной страницы"""
+        try:
+            self.logger.info("Получение начальных cookies...")
+            response = self.session.get('https://www.kleinanzeigen.de/', timeout=30)
+            if response.status_code == 200:
+                self.logger.info("Cookies получены успешно")
+                return True
+            else:
+                self.logger.warning(f"Не удалось получить cookies: {response.status_code}")
+                return False
+        except Exception as e:
+            self.logger.warning(f"Ошибка при получении cookies: {e}")
+            return False
     
     def parse_listings(self):
         """Основной метод парсинга"""
@@ -721,6 +758,9 @@ class KleinanzeigenParser:
         self.total_runs += 1
         
         self.logger.info(f"Начинаем парсинг объявлений (запуск #{self.total_runs})")
+        
+        # Получаем cookies с главной страницы
+        self.get_initial_cookies()
         
         new_listings_count = 0
         total_processed = 0

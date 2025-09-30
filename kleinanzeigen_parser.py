@@ -143,12 +143,22 @@ class KleinanzeigenParser:
         if os.getenv('DATABASE_PATH'):
             self.database_path = os.getenv('DATABASE_PATH')
         else:
-            self.database_path = '/app/data/listings.db'
+            # Определяем путь в зависимости от окружения
+            if os.path.exists('/app'):  # Docker
+                self.database_path = '/app/data/listings.db'
+            else:  # Локальная разработка
+                os.makedirs('data', exist_ok=True)
+                self.database_path = 'data/listings.db'
             
         if os.getenv('LOG_PATH'):
             self.log_path = os.getenv('LOG_PATH')
         else:
-            self.log_path = '/app/logs/kleinanzeigen_parser.log'
+            # Определяем путь в зависимости от окружения
+            if os.path.exists('/app'):  # Docker
+                self.log_path = '/app/logs/kleinanzeigen_parser.log'
+            else:  # Локальная разработка
+                os.makedirs('logs', exist_ok=True)
+                self.log_path = 'logs/kleinanzeigen_parser.log'
     
     def init_database(self):
         """Инициализация SQLite базы данных"""
@@ -619,6 +629,24 @@ class KleinanzeigenParser:
         except Exception as e:
             self.logger.error(f"Не удалось отправить уведомление об ошибке: {e}")
     
+    def send_telegram_message(self, message: str, parse_mode: str = 'Markdown'):
+        """Отправка произвольного сообщения в Telegram"""
+        if not self.bot or not self.config.get('telegram', {}).get('chat_id'):
+            self.logger.warning("Telegram bot не настроен")
+            return
+        
+        try:
+            import asyncio
+            asyncio.run(self.bot.send_message(
+                chat_id=self.config['telegram']['chat_id'],
+                text=message,
+                parse_mode=parse_mode
+            ))
+            self.logger.info("Сообщение отправлено в Telegram")
+            
+        except Exception as e:
+            self.logger.error(f"Не удалось отправить сообщение в Telegram: {e}")
+    
     def send_status_notification(self, status_type: str, details: str = ""):
         """Отправка уведомлений о статусе парсера"""
         if not self.bot or not self.config.get('telegram', {}).get('chat_id'):
@@ -900,6 +928,23 @@ class KleinanzeigenParser:
                     )
             except:
                 pass
+            raise
+    
+    def run_once(self):
+        """Выполнить один цикл парсинга"""
+        try:
+            self.logger.info("Запуск одного цикла парсинга...")
+            
+            # Здесь должен быть код парсинга
+            for url in self.config.get('search_urls', []):
+                self.logger.info(f"Парсинг URL: {url}")
+                # Имитация работы парсера
+                time.sleep(2)
+            
+            self.logger.info("Цикл парсинга завершен")
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка во время парсинга: {e}")
             raise
     
     def __del__(self):

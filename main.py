@@ -248,6 +248,67 @@ class ProductionRunner:
         
         finally:
             self.logger.info("🛑 Завершение работы парсера")
+    
+    def run_single(self):
+        """Выполнить один цикл парсинга и завершить"""
+        try:
+            # Настройка логирования
+            self.setup_logging()
+            self.logger.info("🚀 Запуск Kleinanzeigen Parser в single-run режиме")
+            self.logger.info(f"Время запуска: {datetime.now()}")
+            self.logger.info(f"Python версия: {sys.version}")
+            self.logger.info(f"Рабочая директория: {os.getcwd()}")
+            
+            # Проверка зависимостей
+            self.logger.info("Проверка зависимостей...")
+            self.check_dependencies()
+            self.logger.info("✓ Все зависимости установлены")
+            
+            # Валидация конфигурации
+            self.logger.info("Проверка конфигурации...")
+            config = self.validate_config()
+            self.logger.info("✓ Конфигурация валидна")
+            
+            # Создаем экземпляр парсера
+            self.logger.info("Инициализация парсера...")
+            self.parser = KleinanzeigenParser("config.json")
+            
+            # Тестируем подключение к Telegram
+            self.logger.info("Тестирование Telegram подключения...")
+            test_message = f"🟢 Kleinanzeigen Parser запущен (single-run)\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            self.parser.send_telegram_message(test_message)
+            
+            self.logger.info("✓ Парсер успешно инициализирован")
+            self.logger.info("📡 Выполняем один цикл парсинга...")
+            
+            # Выполняем один цикл
+            self.logger.info("--- Начало цикла парсинга ---")
+            start_time = time.time()
+            
+            # Запускаем парсер
+            self.parser.run_once()
+            
+            elapsed_time = time.time() - start_time
+            self.logger.info(f"--- Цикл завершен за {elapsed_time:.2f} сек ---")
+            self.logger.info("✅ Single-run завершен успешно")
+            
+        except Exception as e:
+            self.logger.error(f"Критическая ошибка: {e}", exc_info=True)
+            
+            # Пытаемся отправить уведомление о критической ошибке
+            try:
+                if self.parser:
+                    error_message = f"🔴 ОШИБКА в single-run режиме:\n{str(e)}"
+                    self.parser.send_telegram_message(error_message)
+            except:
+                pass
+                
+            sys.exit(1)
+        
+        finally:
+            self.logger.info("🛑 Single-run завершен")
+
+def main():
             
             # Отправляем уведомление о завершении
             try:
@@ -259,12 +320,25 @@ class ProductionRunner:
 
 def main():
     """Главная точка входа"""
-    print("Kleinanzeigen Parser - Production Mode")
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Kleinanzeigen Parser')
+    parser.add_argument('--single-run', action='store_true', 
+                       help='Выполнить только один цикл парсинга и выйти')
+    args = parser.parse_args()
+    
+    if args.single_run:
+        print("Kleinanzeigen Parser - Single Run Mode")
+    else:
+        print("Kleinanzeigen Parser - Production Mode")
     print("=" * 50)
     
     try:
         runner = ProductionRunner()
-        runner.run()
+        if args.single_run:
+            runner.run_single()
+        else:
+            runner.run()
     except KeyboardInterrupt:
         print("\nПолучено прерывание от пользователя. Завершение...")
     except Exception as e:

@@ -1,0 +1,45 @@
+name: Kleinanzeigen Parser
+
+# Запуск каждые 30 минут
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # каждые 30 минут
+  workflow_dispatch:        # можно запустить вручную
+  push:                    # для тестирования при коммите
+    branches: [ main ]
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Create directories and config
+      run: |
+        mkdir -p data logs
+        cp config.example.json config.json
+    
+    - name: Run parser
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python main.py --single-run
+    
+    - name: Upload logs (if any errors)
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: parser-logs
+        path: logs/

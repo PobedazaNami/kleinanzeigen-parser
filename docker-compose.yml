@@ -5,8 +5,6 @@ services:
     build: .
     container_name: kleinanzeigen_parser
     restart: unless-stopped
-    env_file:
-      - .env
     volumes:
       - parser_data:/app/data
       - parser_logs:/app/logs
@@ -14,6 +12,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Berlin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     mem_limit: 256m
     cpu_count: 1
     healthcheck:

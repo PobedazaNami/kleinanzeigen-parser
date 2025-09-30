@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  kleinanzeigen-parser:
+    build: .
+    container_name: kleinanzeigen_parser
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - parser_data:/app/data
+      - parser_logs:/app/logs
+      - ./config.json:/app/config.json:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Berlin
+    mem_limit: 256m
+    cpu_count: 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/listings.db').execute('SELECT 1')"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 1m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  parser_data:
+    driver: local
+  parser_logs:
+    driver: local

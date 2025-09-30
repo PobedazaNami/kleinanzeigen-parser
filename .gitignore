@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Виртуальное окружение
+venv/
+env/
+ENV/
+
+# Environment файлы с секретами
+.env
+.env.local
+.env.*.local
+
+# База данных
+*.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+
+# Конфигурация (может содержать приватные токены)
+config.json
+
+# Docker volumes data
+data/
+logs/
+
+# Временные файлы
+*.tmp
+*.temp
+temp/
+
+# Экспорт данных
+*_export_*.json
+
+# Backup files
+*.bak
+backup_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Windows
+*.bat.bak

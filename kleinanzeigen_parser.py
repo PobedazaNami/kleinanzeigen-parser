@@ -617,13 +617,14 @@ class KleinanzeigenParser:
         """Сохранение объявления в базу данных"""
         try:
             # Проверяем, существует ли объявление
-            self.cursor.execute('SELECT id FROM listings WHERE id = ? OR hash = ?', 
+            self.cursor.execute('SELECT notified FROM listings WHERE id = ? OR hash = ?', 
                               (listing['id'], listing['hash']))
             existing = self.cursor.fetchone()
             
             if existing:
                 # Объявление уже существует
-                return False
+                # Возвращаем True только если уведомление еще не отправлено
+                return not existing[0]
             
             # Добавляем новое объявление
             self.cursor.execute('''
@@ -874,6 +875,12 @@ class KleinanzeigenParser:
                             
                             # Отправляем уведомление
                             self.send_telegram_notification(listing_data)
+                            
+                            # Помечаем объявление как отправленное
+                            self.cursor.execute('UPDATE listings SET notified = ? WHERE id = ?', 
+                                              (True, listing_data['id']))
+                            self.conn.commit()
+                            self.logger.info(f"Уведомление отправлено для: {listing_data['title']}")
                         
                     except Exception as e:
                         errors_count += 1

@@ -25,6 +25,14 @@ jobs:
       run: |
         pip install -r requirements.txt
     
+    - name: Restore database from cache
+      uses: actions/cache/restore@v4
+      with:
+        path: data/listings.db
+        key: parser-database-${{ github.run_id }}
+        restore-keys: |
+          parser-database-
+    
     - name: Create directories and config
       run: |
         mkdir -p data logs
@@ -36,6 +44,13 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         python main.py --single-run
+    
+    - name: Save database to cache
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        path: data/listings.db
+        key: parser-database-${{ github.run_id }}
     
     - name: Upload logs (if any errors)
       if: failure()

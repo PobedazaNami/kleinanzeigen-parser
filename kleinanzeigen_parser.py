@@ -248,11 +248,25 @@ class KleinanzeigenParser:
                 
                 # Проверка на специальные коды ошибок
                 if response.status_code == 403:
-                    self.send_status_notification("BLOCKED", f"HTTP 403 Forbidden для {url}")
+                    error_msg = f"HTTP 403 Forbidden для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.send_error_notification(error_msg, "ДОСТУП ЗАПРЕЩЕН")
                 elif response.status_code == 429:
-                    self.send_status_notification("BLOCKED", f"HTTP 429 Too Many Requests для {url}")
+                    error_msg = f"HTTP 429 Too Many Requests для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.send_error_notification(error_msg, "СЛИШКОМ МНОГО ЗАПРОСОВ")
                 elif response.status_code >= 500:
-                    self.send_error_notification(f"Ошибка сервера {response.status_code} для {url}", "ОШИБКА СЕРВЕРА")
+                    error_msg = f"Ошибка сервера {response.status_code} для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.send_error_notification(error_msg, "ОШИБКА СЕРВЕРА")
+                elif response.status_code >= 400:
+                    error_msg = f"HTTP {response.status_code} для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.send_error_notification(error_msg, "ОШИБКА HTTP")
                 
                 response.raise_for_status()
                 
@@ -813,7 +827,7 @@ class KleinanzeigenParser:
                 soup = self.get_page(search_url)
                 if not soup:
                     errors_count += 1
-                    self.send_error_notification(f"Не удалось получить список объявлений с {search_url}")
+                    # Детальное уведомление об ошибке уже отправлено в get_page()
                     continue
                 
                 # Извлекаем ссылки на объявления

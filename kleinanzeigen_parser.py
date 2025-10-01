@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import re
 import os
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlparse
@@ -22,6 +23,7 @@ from telegram import Bot
 import traceback
 import sys
 from dotenv import load_dotenv
+import requests as sync_requests
 
 
 class KleinanzeigenParser:
@@ -104,6 +106,32 @@ class KleinanzeigenParser:
         self.consecutive_failures = 0
         self.last_listings_found = 0
         self.total_runs = 0
+        
+    def send_telegram_sync(self, message: str, parse_mode: str = 'Markdown', disable_web_page_preview: bool = False):
+        """Синхронная отправка сообщения в Telegram через HTTP API"""
+        if not self.config.get('telegram', {}).get('bot_token') or not self.config.get('telegram', {}).get('chat_id'):
+            return False
+            
+        try:
+            bot_token = self.config['telegram']['bot_token']
+            chat_id = self.config['telegram']['chat_id']
+            
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            
+            data = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': parse_mode,
+                'disable_web_page_preview': disable_web_page_preview
+            }
+            
+            response = sync_requests.post(url, data=data, timeout=10)
+            response.raise_for_status()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Ошибка при синхронной отправке в Telegram: {e}")
+            return False
         
     def load_config(self, config_file: str) -> Dict:
         """Загрузка конфигурации из файла"""
@@ -301,82 +329,90 @@ class KleinanzeigenParser:
     def extract_listing_date(self, soup: BeautifulSoup) -> Optional[datetime]:
         """Извлечение даты публикации объявления"""
         try:
-            # Различные селекторы для даты
-            date_selectors = [
-                '#viewad-extra-info',
-                '.aditem-main--top--right', 
-                '.aditem-addon',
-                '.aditem-details--top--right'
-            ]
-            
-            date_patterns = [
-                r'(\d{1,2}\.\d{1,2}\.\d{4})',  # DD.MM.YYYY
-                r'(Heute)',                    # Heute
-                r'(Gestern)',                  # Gestern  
-                r'(\d{1,2}\.\d{1,2}\.\d{2})', # DD.MM.YY
-            ]
-            
-            page_text = soup.get_text()
-            
-            # Ищем текущую дату
             today = datetime.now()
             
-            # Проверяем на "Heute" (сегодня)
-            if 'heute' in page_text.lower():
-                return today
+            # ПРИОРИТЕТ 1: Ищем точную дату в #viewad-extra-info (самый надежный источник)
+            viewad_info = soup.select_one('#viewad-extra-info')
+            if viewad_info:
+                info_text = viewad_info.get_text()
+                self.logger.debug(f"Текст из #viewad-extra-info: {info_text[:200]}")
+                
+                # Ищем дату в формате DD.MM.YYYY
+                date_match = re.search(r'(\d{1,2}\.\d{1,2}\.\d{4})', info_text)
+                if date_match:
+                    date_str = date_match.group(1)
+                    try:
+                        day, month, year = date_str.split('.')
+                        parsed_date = datetime(int(year), int(month), int(day))
+                        self.logger.debug(f"Найдена точная дата в #viewad-extra-info: {parsed_date.strftime('%d.%m.%Y')}")
+                        return parsed_date
+                    except ValueError:
+                        pass
             
-            # Проверяем на "Gestern" (вчера)  
-            if 'gestern' in page_text.lower():
-                return today - timedelta(days=1)
+            # ПРИОРИТЕТ 2: Ищем в других селекторах с более строгой проверкой
+            date_selectors = [
+                '.aditem-details--top--right',
+                '.aditem-addon',  
+                '.ad-keyfacts',
+                '.aditem-main--top--right'
+            ]
             
-            # Ищем конкретную дату
             for selector in date_selectors:
                 date_elem = soup.select_one(selector)
                 if date_elem:
                     date_text = date_elem.get_text()
+                    self.logger.debug(f"Текст из {selector}: {date_text[:100]}")
                     
-                    for pattern in date_patterns:
-                        match = re.search(pattern, date_text)
-                        if match:
-                            date_str = match.group(1)
-                            
-                            if date_str == 'Heute':
-                                return today
-                            elif date_str == 'Gestern':
-                                return today - timedelta(days=1)
-                            else:
-                                # Парсим дату
-                                try:
-                                    if len(date_str.split('.')) == 3:
-                                        day, month, year = date_str.split('.')
-                                        if len(year) == 2:
-                                            year = '20' + year
-                                        return datetime(int(year), int(month), int(day))
-                                except ValueError:
-                                    continue
+                    # Сначала ищем точную дату DD.MM.YYYY
+                    date_match = re.search(r'(\d{1,2}\.\d{1,2}\.\d{4})', date_text)
+                    if date_match:
+                        date_str = date_match.group(1)
+                        try:
+                            day, month, year = date_str.split('.')
+                            parsed_date = datetime(int(year), int(month), int(day))
+                            self.logger.debug(f"Найдена дата в {selector}: {parsed_date.strftime('%d.%m.%Y')}")
+                            return parsed_date
+                        except ValueError:
+                            continue
+                    
+                    # Проверяем на "Heute" только в контексте даты публикации
+                    if ('heute' in date_text.lower() and 
+                        ('eingestellt' in date_text.lower() or 'online' in date_text.lower() or 'veröffentlicht' in date_text.lower())):
+                        self.logger.debug(f"Найден 'Heute' в контексте публикации в {selector}")
+                        return today
+                        
+                    # Проверяем на "Gestern"  
+                    if ('gestern' in date_text.lower() and 
+                        ('eingestellt' in date_text.lower() or 'online' in date_text.lower() or 'veröffentlicht' in date_text.lower())):
+                        self.logger.debug(f"Найден 'Gestern' в контексте публикации в {selector}")
+                        return today - timedelta(days=1)
             
-            # Если дата не найдена, ищем в общем тексте страницы
-            for pattern in date_patterns:
-                matches = re.findall(pattern, page_text)
-                if matches:
-                    for match in matches:
-                        if match == 'Heute':
-                            return today
-                        elif match == 'Gestern':
-                            return today - timedelta(days=1)
-                        else:
-                            try:
-                                if '.' in match and len(match.split('.')) == 3:
-                                    day, month, year = match.split('.')
-                                    if len(year) == 2:
-                                        year = '20' + year
-                                    parsed_date = datetime(int(year), int(month), int(day))
-                                    # Возвращаем только если дата разумная (не старше 30 дней)
-                                    if (today - parsed_date).days <= 30:
-                                        return parsed_date
-                            except ValueError:
-                                continue
+            # ПРИОРИТЕТ 3: Последняя попытка - ищем разумные даты во всем тексте
+            # НО только если не нашли в надежных селекторах
+            self.logger.debug("Ищем дату во всем тексте страницы как последняя попытка")
+            page_text = soup.get_text()
+            date_matches = re.findall(r'(\d{1,2}\.\d{1,2}\.\d{4})', page_text)
             
+            valid_dates = []
+            for date_str in date_matches:
+                try:
+                    day, month, year = date_str.split('.')
+                    parsed_date = datetime(int(year), int(month), int(day))
+                    # Фильтруем только разумные даты (не в будущем и не старше 30 дней)
+                    days_diff = (today - parsed_date).days
+                    if -1 <= days_diff <= 30:  # Допускаем завтрашнюю дату
+                        valid_dates.append((parsed_date, days_diff))
+                except ValueError:
+                    continue
+            
+            # Берем самую свежую дату (с минимальным days_diff)
+            if valid_dates:
+                valid_dates.sort(key=lambda x: x[1])  # Сортируем по days_diff
+                best_date = valid_dates[0][0]
+                self.logger.debug(f"Найдена лучшая дата в тексте: {best_date.strftime('%d.%m.%Y')}")
+                return best_date
+            
+            self.logger.debug("Дата публикации не найдена")
             return None
             
         except Exception as e:
@@ -386,9 +422,9 @@ class KleinanzeigenParser:
     def is_listing_from_today(self, listing_date: Optional[datetime]) -> bool:
         """Проверка, что объявление опубликовано недавно"""
         if not listing_date:
-            # Если дату не удалось определить, считаем что объявление свежее
-            # (лучше не пропустить новое объявление)
-            return True
+            # Если дату не удалось определить, НЕ обрабатываем объявление
+            # (лучше пропустить чем отправить старое)
+            return False
         
         date_config = self.config.get('date_filtering', {})
         only_today = date_config.get('only_today', True)
@@ -502,7 +538,7 @@ class KleinanzeigenParser:
             if not self.is_listing_from_today(listing_date):
                 date_str = listing_date.strftime('%d.%m.%Y') if listing_date else "неизвестна"
                 self.logger.info(f"Объявление пропущено - дата публикации: {date_str} (не сегодня): {title}")
-                return None
+                return "SKIPPED_BY_DATE"
             
             # Извлечение ID объявления из URL
             listing_id = re.search(r'/(\d+)-', url)
@@ -566,8 +602,18 @@ class KleinanzeigenParser:
     def save_listing(self, listing: Dict) -> bool:
         """Сохранение объявления в базу данных"""
         try:
+            # Проверяем, существует ли объявление
+            self.cursor.execute('SELECT id FROM listings WHERE id = ? OR hash = ?', 
+                              (listing['id'], listing['hash']))
+            existing = self.cursor.fetchone()
+            
+            if existing:
+                # Объявление уже существует
+                return False
+            
+            # Добавляем новое объявление
             self.cursor.execute('''
-                INSERT OR REPLACE INTO listings 
+                INSERT INTO listings 
                 (id, title, price, size, rooms, location, description, url, date_posted, date_found, hash, notified)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
@@ -602,12 +648,7 @@ class KleinanzeigenParser:
             if listing.get('description'):
                 message += f"\n\n📄 Описание:\n{listing['description'][:200]}..."
             
-            self.bot.send_message(
-                chat_id=self.config['telegram']['chat_id'],
-                text=message,
-                parse_mode='Markdown',
-                disable_web_page_preview=False
-            )
+            self.send_telegram_sync(message, parse_mode='Markdown', disable_web_page_preview=False)
             
             # Отмечаем как отправленное
             self.cursor.execute(
@@ -638,11 +679,7 @@ class KleinanzeigenParser:
                 hours = int(time_since.total_seconds() / 3600)
                 message += f"⏳ Последний успешный запуск: {hours}ч назад\n"
             
-            self.bot.send_message(
-                chat_id=self.config['telegram']['chat_id'],
-                text=message,
-                parse_mode='Markdown'
-            )
+            self.send_telegram_sync(message, parse_mode='Markdown')
             
             self.logger.info(f"Отправлено уведомление об ошибке: {error_message}")
             
@@ -656,12 +693,7 @@ class KleinanzeigenParser:
             return
         
         try:
-            import asyncio
-            asyncio.run(self.bot.send_message(
-                chat_id=self.config['telegram']['chat_id'],
-                text=message,
-                parse_mode=parse_mode
-            ))
+            self.send_telegram_sync(message, parse_mode=parse_mode)
             self.logger.info("Сообщение отправлено в Telegram")
             
         except Exception as e:
@@ -703,11 +735,7 @@ class KleinanzeigenParser:
             else:
                 message = f"📊 *СТАТУС ПАРСЕРА*\n\n{details}"
             
-            self.bot.send_message(
-                chat_id=self.config['telegram']['chat_id'],
-                text=message,
-                parse_mode='Markdown'
-            )
+            self.send_telegram_sync(message, parse_mode='Markdown')
             
         except Exception as e:
             self.logger.error(f"Ошибка при отправке статусного уведомления: {e}")
@@ -718,15 +746,25 @@ class KleinanzeigenParser:
             "access denied",
             "blocked",
             "captcha",
-            "robot",
             "bot detection",
-            "rate limit",
+            "rate limit", 
             "too many requests",
             "403 forbidden",
-            "cloudflare"
+            "cloudflare",
+            "you are being rate limited",
+            "your request has been blocked"
         ]
         
         text_lower = response_text.lower()
+        
+        # Исключаем нормальные SEO-теги robots
+        if 'robots" content="index' in text_lower:
+            # Это нормальный SEO-тег, а не блокировка
+            pass
+        elif "robot" in text_lower and "robots.txt" not in text_lower:
+            # Проверяем контекст - если это не robots.txt ссылка
+            return True
+        
         for indicator in blocking_indicators:
             if indicator in text_lower:
                 self.logger.warning(f"Обнаружен индикатор блокировки: {indicator}")
@@ -765,6 +803,7 @@ class KleinanzeigenParser:
         new_listings_count = 0
         total_processed = 0
         errors_count = 0
+        skipped_by_date_count = 0  # Объявления пропущенные по дате
         
         try:
             for search_url in self.config.get('search_urls', []):
@@ -801,8 +840,11 @@ class KleinanzeigenParser:
                         
                         # Извлекаем данные
                         listing_data = self.extract_listing_data(listing_soup, link)
-                        if not listing_data:
+                        if listing_data is None:
                             errors_count += 1
+                            continue
+                        elif listing_data == "SKIPPED_BY_DATE":
+                            skipped_by_date_count += 1
                             continue
                         
                         # Проверяем фильтры
@@ -821,7 +863,10 @@ class KleinanzeigenParser:
                         
                     except Exception as e:
                         errors_count += 1
-                        self.logger.error(f"Ошибка при обработке объявления {link}: {e}")
+                        error_msg = f"Ошибка при обработке объявления {link}: {e}"
+                        self.logger.error(error_msg)
+                        # Отправляем каждую ошибку в Telegram
+                        self.send_error_notification(error_msg, "ОШИБКА ПАРСИНГА")
                         if errors_count > 5:  # Если слишком много ошибок
                             self.send_error_notification(f"Множественные ошибки при парсинге. Последняя: {e}", "КРИТИЧЕСКАЯ ОШИБКА")
                     
@@ -860,13 +905,31 @@ class KleinanzeigenParser:
                     if self.consecutive_failures % 6 == 0:
                         self.send_status_notification("NO_RESULTS")
             
-            # Если слишком много ошибок
-            if errors_count > total_processed * 0.5:  # Больше 50% ошибок
-                self.send_error_notification(f"Высокий процент ошибок: {errors_count}/{total_processed}", "КРИТИЧЕСКАЯ ОШИБКА")
+            # Подсчитываем реальные обработанные объявления (без пропущенных по дате)
+            real_processed = total_processed - skipped_by_date_count
+            
+            # Если слишком много реальных ошибок (не считая пропущенные по дате)
+            if real_processed > 0 and errors_count > real_processed * 0.5:  # Больше 50% ошибок
+                self.send_error_notification(
+                    f"Высокий процент ошибок: {errors_count} ошибок из {real_processed} обработанных объявлений",
+                    "КРИТИЧЕСКАЯ ОШИБКА"
+                )
+            
+            # Если новых квартир не найдено
+            if new_listings_count == 0 and real_processed > 0:
+                message = f"📭 Новых квартир пока нет\n\n"
+                message += f"Проверено объявлений: {real_processed}\n"
+                if skipped_by_date_count > 0:
+                    message += f"Пропущено старых: {skipped_by_date_count}\n"
+                if errors_count > 0:
+                    message += f"Ошибок: {errors_count}\n"
+                message += f"Время проверки: {datetime.now().strftime('%H:%M:%S')}"
+                self.send_telegram_message(message)
             
             self.logger.info(f"Парсинг завершен за {duration.total_seconds():.1f}сек. "
                            f"Новых объявлений: {new_listings_count}, "
-                           f"Обработано: {total_processed}, "
+                           f"Обработано: {real_processed}, "
+                           f"Пропущено по дате: {skipped_by_date_count}, "
                            f"Ошибок: {errors_count}")
                            
         except Exception as e:
@@ -933,11 +996,7 @@ class KleinanzeigenParser:
             startup_message += f"\n✅ Мониторинг активен!"
             
             if self.bot and self.config.get('telegram', {}).get('chat_id'):
-                self.bot.send_message(
-                    chat_id=self.config['telegram']['chat_id'],
-                    text=startup_message,
-                    parse_mode='Markdown'
-                )
+                self.send_telegram_sync(startup_message, parse_mode='Markdown')
         except Exception as e:
             self.logger.error(f"Ошибка при отправке уведомления о запуске: {e}")
         
@@ -961,11 +1020,7 @@ class KleinanzeigenParser:
                 shutdown_message += f"🔢 Всего было запусков: {self.total_runs}\n"
                 
                 if self.bot and self.config.get('telegram', {}).get('chat_id'):
-                    self.bot.send_message(
-                        chat_id=self.config['telegram']['chat_id'],
-                        text=shutdown_message,
-                        parse_mode='Markdown'
-                    )
+                    self.send_telegram_sync(shutdown_message, parse_mode='Markdown')
             except:
                 pass
             raise

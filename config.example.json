@@ -11,8 +11,7 @@
     }
   },
   "search_urls": [
-    "https://www.kleinanzeigen.de/s-wohnung-mieten/berlin/anzeige:angebote/preis:400:1200/c203l3331+wohnung_mieten.qm_d:50,+wohnung_mieten.zimmer_d:2,",
-    "https://www.kleinanzeigen.de/s-wohnung-mieten/hamburg/anzeige:angebote/preis:500:1500/c203l9409+wohnung_mieten.qm_d:40,"
+    "https://www.kleinanzeigen.de/s-wohnung-mieten/darmstadt/wohnung/k0c203l4888"
   ],
   "filters": {
     "exclude_titles": ["WG", "wg", "Wg", "Zwischenmiete", "möbliert", "furnished"],

@@ -937,9 +937,9 @@ class KleinanzeigenParser:
                 )
             
             # Если новых квартир не найдено
-            if new_listings_count == 0 and real_processed > 0:
+            if new_listings_count == 0 and total_processed > 0:
                 message = f"📭 Новых квартир пока нет\n\n"
-                message += f"Проверено объявлений: {real_processed}\n"
+                message += f"Проверено объявлений: {total_processed}\n"
                 if skipped_by_date_count > 0:
                     message += f"Пропущено старых: {skipped_by_date_count}\n"
                 if errors_count > 0:

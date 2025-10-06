@@ -362,6 +362,14 @@ class KleinanzeigenParser:
                         return parsed_date
                     except ValueError:
                         pass
+                
+                # Если точной даты нет, проверяем на "Heute" или "Gestern"
+                if 'heute' in info_text.lower():
+                    self.logger.debug(f"Найден 'Heute' в #viewad-extra-info")
+                    return today
+                if 'gestern' in info_text.lower():
+                    self.logger.debug(f"Найден 'Gestern' в #viewad-extra-info")
+                    return today - timedelta(days=1)
             
             # ПРИОРИТЕТ 2: Ищем в других селекторах с более строгой проверкой
             date_selectors = [
@@ -389,13 +397,23 @@ class KleinanzeigenParser:
                         except ValueError:
                             continue
                     
-                    # Проверяем на "Heute" только в контексте даты публикации
+                    # Проверяем на "Heute" с временем (например "Heute, 22:20")
+                    if re.search(r'heute\s*,?\s*\d{1,2}:\d{2}', date_text.lower()):
+                        self.logger.debug(f"Найден 'Heute' с временем в {selector}")
+                        return today
+                    
+                    # Проверяем на "Heute" в контексте даты публикации
                     if ('heute' in date_text.lower() and 
                         ('eingestellt' in date_text.lower() or 'online' in date_text.lower() or 'veröffentlicht' in date_text.lower())):
                         self.logger.debug(f"Найден 'Heute' в контексте публикации в {selector}")
                         return today
+                    
+                    # Проверяем на "Gestern" с временем
+                    if re.search(r'gestern\s*,?\s*\d{1,2}:\d{2}', date_text.lower()):
+                        self.logger.debug(f"Найден 'Gestern' с временем в {selector}")
+                        return today - timedelta(days=1)
                         
-                    # Проверяем на "Gestern"  
+                    # Проверяем на "Gestern" в контексте  
                     if ('gestern' in date_text.lower() and 
                         ('eingestellt' in date_text.lower() or 'online' in date_text.lower() or 'veröffentlicht' in date_text.lower())):
                         self.logger.debug(f"Найден 'Gestern' в контексте публикации в {selector}")
@@ -489,17 +507,63 @@ class KleinanzeigenParser:
             # Поиск информации о размере и комнатах в различных местах
             details_section = soup.find('dl') or soup.find('div', class_='addetailslist')
             if details_section:
-                text = details_section.get_text()
+                # Ищем по структуре HTML (более надежно)
+                # Размер квартиры (Wohnfläche)
+                for item in details_section.find_all(['dt', 'li']):
+                    item_text = item.get_text().strip().lower()
+                    
+                    # Поиск размера
+                    if 'wohnfläche' in item_text or 'wohnflache' in item_text:
+                        # Ищем span со значением
+                        value_elem = item.find('span', class_='addetailslist--detail--value')
+                        if value_elem:
+                            value_text = value_elem.get_text().strip()
+                            size_match = re.search(r'(\d+)', value_text)
+                            if size_match:
+                                size = int(size_match.group(1))
+                        # Альтернативно: dd элемент (для <dl><dt><dd> структур)
+                        elif item.name == 'dt':
+                            dd_elem = item.find_next_sibling('dd')
+                            if dd_elem:
+                                value_text = dd_elem.get_text().strip()
+                                size_match = re.search(r'(\d+)', value_text)
+                                if size_match:
+                                    size = int(size_match.group(1))
+                    
+                    # Поиск количества комнат
+                    if 'zimmer' in item_text and 'schlafzimmer' not in item_text and 'badezimmer' not in item_text:
+                        # Ищем span со значением
+                        value_elem = item.find('span', class_='addetailslist--detail--value')
+                        if value_elem:
+                            value_text = value_elem.get_text().strip()
+                            rooms_match = re.search(r'(\d+(?:[.,]\d+)?)', value_text)
+                            if rooms_match:
+                                rooms = rooms_match.group(1).replace(',', '.')
+                        # Альтернативно: dd элемент
+                        elif item.name == 'dt':
+                            dd_elem = item.find_next_sibling('dd')
+                            if dd_elem:
+                                value_text = dd_elem.get_text().strip()
+                                rooms_match = re.search(r'(\d+(?:[.,]\d+)?)', value_text)
+                                if rooms_match:
+                                    rooms = rooms_match.group(1).replace(',', '.')
                 
-                # Размер квартиры
-                size_match = re.search(r'(\d+)\s*m²', text)
-                if size_match:
-                    size = int(size_match.group(1))
-                
-                # Количество комнат
-                rooms_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:Zi|Zimmer)', text)
-                if rooms_match:
-                    rooms = rooms_match.group(1).replace(',', '.')
+                # Если не нашли по структуре, пробуем по тексту с улучшенным regex
+                if not size or not rooms:
+                    text = details_section.get_text()
+                    
+                    if not size:
+                        size_match = re.search(r'(\d+)\s*m²', text)
+                        if size_match:
+                            size = int(size_match.group(1))
+                    
+                    if not rooms:
+                        # Более гибкое регулярное выражение, допускающее большие пробелы
+                        rooms_match = re.search(r'Zimmer\s+(\d+(?:[.,]\d+)?)', text, re.IGNORECASE)
+                        if not rooms_match:
+                            rooms_match = re.search(r'(\d+(?:[.,]\d+)?)\s+Zimmer', text, re.IGNORECASE)
+                        if rooms_match:
+                            rooms = rooms_match.group(1).replace(',', '.')
             
             # Альтернативный поиск в тексте страницы
             if not size or not rooms:
@@ -510,7 +574,10 @@ class KleinanzeigenParser:
                         size = int(size_match.group(1))
                 
                 if not rooms:
-                    rooms_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:Zi|Zimmer)', page_text)
+                    # Более гибкий поиск во всем тексте
+                    rooms_match = re.search(r'Zimmer\s+(\d+(?:[.,]\d+)?)', page_text, re.IGNORECASE)
+                    if not rooms_match:
+                        rooms_match = re.search(r'(\d+(?:[.,]\d+)?)\s+Zimmer', page_text, re.IGNORECASE)
                     if rooms_match:
                         rooms = rooms_match.group(1).replace(',', '.')
             

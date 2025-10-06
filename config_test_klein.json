@@ -11,12 +11,22 @@
     }
   },
   "search_urls": [
-    "https://www.kleinanzeigen.de/s-wohnung-mieten/darmstadt/wohnung/k0c203l4888",
-    "https://www.immowelt.de/liste/darmstadt/wohnungen/mieten?d=true&sd=DESC&sf=TIMESTAMP&sp=1"
+    "https://www.kleinanzeigen.de/s-wohnung-mieten/darmstadt/wohnung/k0c203l4888"
   ],
   "filters": {
-    "exclude_titles": ["WG", "wg", "Wg", "Zwischenmiete", "möbliert", "furnished"],
-    "exclude_descriptions": ["WG", "Wohngemeinschaft", "shared"],
+    "exclude_titles": [
+      "WG",
+      "wg",
+      "Wg",
+      "Zwischenmiete",
+      "möbliert",
+      "furnished"
+    ],
+    "exclude_descriptions": [
+      "WG",
+      "Wohngemeinschaft",
+      "shared"
+    ],
     "min_price": 300,
     "max_price": 2000,
     "min_rooms": 1,
@@ -31,7 +41,7 @@
     "request_timeout_seconds": 15,
     "random_delay_min": 3,
     "random_delay_max": 8,
-    "max_listings_per_run": 50,
+    "max_listings_per_run": 3,
     "max_listings_immowelt": 2,
     "user_agents_rotation": true
   },

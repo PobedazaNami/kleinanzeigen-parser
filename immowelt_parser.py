@@ -40,10 +40,12 @@ class ImmoweltParser(KleinanzeigenParser):
         self.session = requests.Session()
         
         # Более простые headers для Immowelt
+        # ВАЖНО: НЕ используем 'br' (brotli) в Accept-Encoding, т.к. requests неправильно его декодирует
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',  # БЕЗ brotli!
             'Connection': 'keep-alive',
         })
         
@@ -145,6 +147,24 @@ class ImmoweltParser(KleinanzeigenParser):
         except Exception as e:
             self.logger.warning(f"Ошибка при извлечении даты из Immowelt: {e}")
             return None
+    
+    def parse_listings(self):
+        """Основной метод парсинга с ограничением для Immowelt"""
+        # Временно переопределяем max_listings_per_run для Immowelt
+        original_max = self.config.get('settings', {}).get('max_listings_per_run', 50)
+        immowelt_max = self.config.get('settings', {}).get('max_listings_immowelt', 2)
+        
+        # Устанавливаем лимит для Immowelt
+        self.config['settings']['max_listings_per_run'] = immowelt_max
+        self.logger.info(f"Ограничение для Immowelt: максимум {immowelt_max} объявлений")
+        
+        try:
+            # Вызываем родительский метод
+            result = super().parse_listings()
+            return result
+        finally:
+            # Восстанавливаем оригинальное значение
+            self.config['settings']['max_listings_per_run'] = original_max
     
     def extract_listing_data(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
         """Извлечение данных из отдельного объявления Immowelt"""

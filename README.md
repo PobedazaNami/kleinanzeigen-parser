@@ -1,14 +1,52 @@
-# Kleinanzeigen Parser 🏠
+# Multi-Site Apartment Parser 🏠
 
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://www.docker.com/)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-green?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-green### Структура проекта
+
+```
+kleinanzeigen-parser/
+├── kleinanzeigen_parser.py    # Парсер для Kleinanzeigen.de
+├── immowelt_parser.py         # Парсер для Immowelt.de  
+├── main.py                    # Точка входа и координация парсеров
+├── db_manager.py              # Управление базой данных
+├── config.example.json        # Пример конфигурации
+├── requirements.txt           # Python зависимости
+├── Dockerfile                 # Docker образ
+├── docker-compose.yml         # Docker Compose конфигурация
+└── docs/                      # Документация
+    ├── DEPLOYMENT.md          # Инструкции по развертыванию
+    └── API.md                 # API документация (если есть)
+```
+
+## 📝 Как получить URL для поиска
+
+### Kleinanzeigen.de
+1. Перейдите на https://www.kleinanzeigen.de
+2. Используйте фильтры для поиска квартир
+3. Скопируйте URL из адресной строки
+
+### Immowelt.de
+1. Перейдите на https://www.immowelt.de
+2. Введите город и настройте фильтры
+3. Нажмите "Suchen"
+4. Скопируйте URL из адресной строки
+
+Пример URL Immowelt:
+```
+https://www.immowelt.de/liste/darmstadt/wohnungen/mieten?d=true&sd=DESC&sf=TIMESTAMP&sp=1
+```
+
+## 📋 Полная документация
+
+Подробные инструкции смотрите в [DEPLOYMENT.md](DEPLOYMENT.md)s://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://telegram.org/)
 
-Автоматический парсер объявлений о сдаче квартир с Kleinanzeigen.de с уведомлениями в Telegram.
+Автоматический парсер объявлений о сдаче квартир с Kleinanzeigen.de и Immowelt.de с уведомлениями в Telegram.
 
 ## ✨ Особенности
 
+- 🌐 **Мультисайтовый парсинг** - поддержка Kleinanzeigen.de и Immowelt.de
 - 🐳 **Docker развертывание** - запуск одной командой
 - ⏰ **Автоматический парсинг** каждые 30 минут  
 - 🔍 **Умная фильтрация** (исключение WG, только сегодняшние объявления)
@@ -16,6 +54,11 @@
 - 🗄️ **SQLite база данных** для отслеживания объявлений
 - 📝 **Полное логирование** всех операций
 - 🛡️ **Защита от блокировок** (случайные задержки, ротация User-Agent)
+
+## 🎯 Поддерживаемые сайты
+
+1. **Kleinanzeigen.de** (ранее eBay Kleinanzeigen)
+2. **Immowelt.de** - один из крупнейших порталов недвижимости в Германии
 
 ## 🚀 Быстрый запуск
 
@@ -98,8 +141,9 @@ docker stats kleinanzeigen_parser
 
 ```
 kleinanzeigen-parser/
-├── kleinanzeigen_parser.py    # Основной парсер
-├── main.py                    # Точка входа
+├── kleinanzeigen_parser.py    # Парсер для Kleinanzeigen.de
+├── immowelt_parser.py         # Парсер для Immowelt.de
+├── main.py                    # Точка входа и координатор парсеров
 ├── config.json                # Конфигурация 
 ├── docker-compose.yml         # Docker Compose
 ├── Dockerfile                 # Docker образ
@@ -108,7 +152,7 @@ kleinanzeigen-parser/
 
 ## ⚙️ Конфигурация
 
-Основные настройки в `config.json`:
+Основные настройки в `config.json`. Вы можете добавить URL для обоих сайтов в массив `search_urls`:
 
 ```json
 {
@@ -117,7 +161,8 @@ kleinanzeigen-parser/
     "chat_id": "id_чата"
   },
   "search_urls": [
-    "URL_для_поиска_квартир"
+    "https://www.kleinanzeigen.de/s-wohnung-mieten/darmstadt/wohnung/k0c203l4888",
+    "https://www.immowelt.de/liste/darmstadt/wohnungen/mieten?d=true&sd=DESC&sf=TIMESTAMP&sp=1"
   ],
   "filters": {
     "exclude_titles": ["WG", "wg", "Wg"],

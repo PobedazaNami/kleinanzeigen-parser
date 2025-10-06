@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Kleinanzeigen Parser - Production Entry Point
-Парсер объявлений Kleinanzeigen для поиска квартир в аренду
+Парсер объявлений Kleinanzeigen и Immowelt для поиска квартир в аренду
 """
 
 import logging
@@ -14,17 +14,20 @@ import time
 import signal
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+from typing import Dict, List
 
 # Добавляем текущую директорию в PYTHONPATH
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from kleinanzeigen_parser import KleinanzeigenParser
+from immowelt_parser import ImmoweltParser
 
 class ProductionRunner:
     """Класс для запуска парсера в продакшене"""
     
     def __init__(self):
-        self.parser = None
+        self.parsers = []  # Список парсеров для разных сайтов
         self.logger = None
         self.running = True
         self.setup_logging()
@@ -143,6 +146,32 @@ class ProductionRunner:
         self.logger.info("✓ Конфигурация валидна")
         return config
     
+    def detect_site_type(self, url: str) -> str:
+        """Определение типа сайта по URL"""
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        
+        if 'kleinanzeigen.de' in domain or 'ebay-kleinanzeigen.de' in domain:
+            return 'kleinanzeigen'
+        elif 'immowelt.de' in domain:
+            return 'immowelt'
+        else:
+            self.logger.warning(f"Неизвестный тип сайта для URL: {url}, используем kleinanzeigen по умолчанию")
+            return 'kleinanzeigen'
+    
+    def group_urls_by_site(self, urls: List[str]) -> Dict[str, List[str]]:
+        """Группировка URL по типам сайтов"""
+        grouped = {
+            'kleinanzeigen': [],
+            'immowelt': []
+        }
+        
+        for url in urls:
+            site_type = self.detect_site_type(url)
+            grouped[site_type].append(url)
+        
+        return grouped
+    
     def check_dependencies(self):
         """Проверка зависимостей"""
         self.logger.info("Проверка зависимостей...")
@@ -167,7 +196,7 @@ class ProductionRunner:
     def run(self):
         """Главная функция запуска"""
         try:
-            self.logger.info("🚀 Запуск Kleinanzeigen Parser в продакшен режиме")
+            self.logger.info("🚀 Запуск Multi-Site Parser в продакшен режиме")
             self.logger.info(f"Время запуска: {datetime.now()}")
             self.logger.info(f"Python версия: {sys.version}")
             self.logger.info(f"Рабочая директория: {os.getcwd()}")
@@ -178,16 +207,45 @@ class ProductionRunner:
             # Валидируем конфигурацию
             config = self.validate_config()
             
-            # Создаем экземпляр парсера
-            self.logger.info("Инициализация парсера...")
-            self.parser = KleinanzeigenParser("config.json")
+            # Группируем URL по типам сайтов
+            grouped_urls = self.group_urls_by_site(config['search_urls'])
             
-            # Тестируем подключение к Telegram
+            # Создаем парсеры для каждого типа сайта
+            self.parsers = []
+            
+            if grouped_urls['kleinanzeigen']:
+                self.logger.info(f"Создание парсера для Kleinanzeigen ({len(grouped_urls['kleinanzeigen'])} URL)")
+                kleinanzeigen_config = config.copy()
+                kleinanzeigen_config['search_urls'] = grouped_urls['kleinanzeigen']
+                
+                # Сохраняем временный конфиг для kleinanzeigen
+                with open('config_kleinanzeigen_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(kleinanzeigen_config, f, ensure_ascii=False, indent=2)
+                
+                kleinanzeigen_parser = KleinanzeigenParser("config_kleinanzeigen_temp.json")
+                self.parsers.append(('Kleinanzeigen', kleinanzeigen_parser))
+            
+            if grouped_urls['immowelt']:
+                self.logger.info(f"Создание парсера для Immowelt ({len(grouped_urls['immowelt'])} URL)")
+                immowelt_config = config.copy()
+                immowelt_config['search_urls'] = grouped_urls['immowelt']
+                
+                # Сохраняем временный конфиг для immowelt
+                with open('config_immowelt_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(immowelt_config, f, ensure_ascii=False, indent=2)
+                
+                immowelt_parser = ImmoweltParser("config_immowelt_temp.json")
+                self.parsers.append(('Immowelt', immowelt_parser))
+            
+            if not self.parsers:
+                raise ValueError("Не создано ни одного парсера. Проверьте URL в конфигурации.")
+            
+            # Тестируем подключение к Telegram через первый парсер
             self.logger.info("Тестирование Telegram подключения...")
-            test_message = f"🟢 Kleinanzeigen Parser запущен\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            self.parser.send_telegram_message(test_message)
+            test_message = f"🟢 Multi-Site Parser запущен\nСайты: {', '.join([name for name, _ in self.parsers])}\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            self.parsers[0][1].send_telegram_sync(test_message)
             
-            self.logger.info("✓ Парсер успешно инициализирован")
+            self.logger.info("✓ Парсеры успешно инициализированы")
             self.logger.info("📡 Начинаем мониторинг объявлений...")
             
             # Запускаем основной цикл
@@ -196,8 +254,13 @@ class ProductionRunner:
                     self.logger.info("--- Начало цикла парсинга ---")
                     start_time = time.time()
                     
-                    # Запускаем парсер
-                    self.parser.run_once()
+                    # Запускаем все парсеры
+                    for site_name, parser in self.parsers:
+                        try:
+                            self.logger.info(f"🔄 Парсинг {site_name}...")
+                            parser.parse_listings()
+                        except Exception as e:
+                            self.logger.error(f"Ошибка при парсинге {site_name}: {e}", exc_info=True)
                     
                     execution_time = time.time() - start_time
                     self.logger.info(f"--- Цикл завершен за {execution_time:.2f} сек ---")
@@ -224,8 +287,8 @@ class ProductionRunner:
                     # Отправляем уведомление об ошибке
                     try:
                         error_message = f"🔴 Ошибка в главном цикле парсера:\n{str(e)}"
-                        if self.parser:
-                            self.parser.send_telegram_message(error_message)
+                        if self.parsers:
+                            self.parsers[0][1].send_telegram_sync(error_message)
                     except:
                         pass
                     
@@ -238,9 +301,9 @@ class ProductionRunner:
             
             # Пытаемся отправить уведомление о критической ошибке
             try:
-                if self.parser:
+                if self.parsers:
                     error_message = f"🔴 КРИТИЧЕСКАЯ ОШИБКА при запуске парсера:\n{str(e)}"
-                    self.parser.send_telegram_message(error_message)
+                    self.parsers[0][1].send_telegram_sync(error_message)
             except:
                 pass
                 
@@ -248,13 +311,24 @@ class ProductionRunner:
         
         finally:
             self.logger.info("🛑 Завершение работы парсера")
+            
+            # Отправляем уведомление о завершении
+            try:
+                if self.parsers:
+                    shutdown_message = f"⚪ Multi-Site Parser остановлен\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    self.parsers[0][1].send_telegram_sync(shutdown_message)
+            except:
+                pass
+            
+            # Удаляем временные конфиги
+            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json']:
+                if os.path.exists(temp_config):
+                    os.remove(temp_config)
     
     def run_single(self):
         """Выполнить один цикл парсинга и завершить"""
         try:
-            # Настройка логирования
-            self.setup_logging()
-            self.logger.info("🚀 Запуск Kleinanzeigen Parser в single-run режиме")
+            self.logger.info("🚀 Запуск Multi-Site Parser в single-run режиме")
             self.logger.info(f"Время запуска: {datetime.now()}")
             self.logger.info(f"Python версия: {sys.version}")
             self.logger.info(f"Рабочая директория: {os.getcwd()}")
@@ -269,24 +343,56 @@ class ProductionRunner:
             config = self.validate_config()
             self.logger.info("✓ Конфигурация валидна")
             
-            # Создаем экземпляр парсера
-            self.logger.info("Инициализация парсера...")
-            self.parser = KleinanzeigenParser("config.json")
+            # Группируем URL по типам сайтов
+            grouped_urls = self.group_urls_by_site(config['search_urls'])
+            
+            # Создаем парсеры для каждого типа сайта
+            self.parsers = []
+            
+            if grouped_urls['kleinanzeigen']:
+                self.logger.info(f"Создание парсера для Kleinanzeigen ({len(grouped_urls['kleinanzeigen'])} URL)")
+                kleinanzeigen_config = config.copy()
+                kleinanzeigen_config['search_urls'] = grouped_urls['kleinanzeigen']
+                
+                with open('config_kleinanzeigen_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(kleinanzeigen_config, f, ensure_ascii=False, indent=2)
+                
+                kleinanzeigen_parser = KleinanzeigenParser("config_kleinanzeigen_temp.json")
+                self.parsers.append(('Kleinanzeigen', kleinanzeigen_parser))
+            
+            if grouped_urls['immowelt']:
+                self.logger.info(f"Создание парсера для Immowelt ({len(grouped_urls['immowelt'])} URL)")
+                immowelt_config = config.copy()
+                immowelt_config['search_urls'] = grouped_urls['immowelt']
+                
+                with open('config_immowelt_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(immowelt_config, f, ensure_ascii=False, indent=2)
+                
+                immowelt_parser = ImmoweltParser("config_immowelt_temp.json")
+                self.parsers.append(('Immowelt', immowelt_parser))
+            
+            if not self.parsers:
+                raise ValueError("Не создано ни одного парсера. Проверьте URL в конфигурации.")
             
             # Тестируем подключение к Telegram
             self.logger.info("Тестирование Telegram подключения...")
-            test_message = f"🟢 Kleinanzeigen Parser запущен (single-run)\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            self.parser.send_telegram_message(test_message)
+            test_message = f"🟢 Multi-Site Parser запущен (single-run)\nСайты: {', '.join([name for name, _ in self.parsers])}\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            self.parsers[0][1].send_telegram_sync(test_message)
             
-            self.logger.info("✓ Парсер успешно инициализирован")
+            self.logger.info("✓ Парсеры успешно инициализированы")
             self.logger.info("📡 Выполняем один цикл парсинга...")
             
             # Выполняем один цикл
             self.logger.info("--- Начало цикла парсинга ---")
             start_time = time.time()
             
-            # Запускаем парсер
-            self.parser.run_once()
+            # Запускаем все парсеры
+            for site_name, parser in self.parsers:
+                try:
+                    self.logger.info(f"🔄 Парсинг {site_name}...")
+                    parser.parse_listings()
+                except Exception as e:
+                    self.logger.error(f"Ошибка при парсинге {site_name}: {e}", exc_info=True)
             
             elapsed_time = time.time() - start_time
             self.logger.info(f"--- Цикл завершен за {elapsed_time:.2f} сек ---")
@@ -297,9 +403,9 @@ class ProductionRunner:
             
             # Пытаемся отправить уведомление о критической ошибке
             try:
-                if self.parser:
+                if self.parsers:
                     error_message = f"🔴 ОШИБКА в single-run режиме:\n{str(e)}"
-                    self.parser.send_telegram_message(error_message)
+                    self.parsers[0][1].send_telegram_sync(error_message)
             except:
                 pass
                 
@@ -307,30 +413,26 @@ class ProductionRunner:
         
         finally:
             self.logger.info("🛑 Single-run завершен")
-
-def main():
             
-            # Отправляем уведомление о завершении
-            try:
-                if self.parser:
-                    shutdown_message = f"⚪ Kleinanzeigen Parser остановлен\nВремя: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                    self.parser.send_telegram_message(shutdown_message)
-            except:
-                pass
+            # Удаляем временные конфиги
+            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json']:
+                if os.path.exists(temp_config):
+                    os.remove(temp_config)
+
 
 def main():
     """Главная точка входа"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Kleinanzeigen Parser')
+    parser = argparse.ArgumentParser(description='Multi-Site Apartment Parser (Kleinanzeigen + Immowelt)')
     parser.add_argument('--single-run', action='store_true', 
                        help='Выполнить только один цикл парсинга и выйти')
     args = parser.parse_args()
     
     if args.single_run:
-        print("Kleinanzeigen Parser - Single Run Mode")
+        print("Multi-Site Parser - Single Run Mode")
     else:
-        print("Kleinanzeigen Parser - Production Mode")
+        print("Multi-Site Parser - Production Mode")
     print("=" * 50)
     
     try:

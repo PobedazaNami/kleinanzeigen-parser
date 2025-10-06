@@ -35,35 +35,56 @@ class ImmoweltParser(KleinanzeigenParser):
     def __init__(self, config_file: str = "config.json"):
         """Инициализация парсера для Immowelt"""
         super().__init__(config_file)
-        self.logger.info("Инициализирован парсер для Immowelt.de")
+        
+        # Создаем отдельную session для Immowelt с более простыми headers
+        self.session = requests.Session()
+        
+        # Более простые headers для Immowelt
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive',
+        })
+        
+        self.logger.info("Инициализирован парсер для Immowelt.de с отдельной session")
+    
+    def get_initial_cookies(self):
+        """Получение начальных cookies с главной страницы Immowelt"""
+        try:
+            self.logger.info("Получение начальных cookies для Immowelt...")
+            response = self.session.get('https://www.immowelt.de/', timeout=30)
+            if response.status_code == 200:
+                self.logger.info("Cookies для Immowelt получены успешно")
+                return True
+            else:
+                self.logger.warning(f"Не удалось получить cookies для Immowelt: {response.status_code}")
+                return False
+        except Exception as e:
+            self.logger.warning(f"Ошибка при получении cookies для Immowelt: {e}")
+            return False
     
     def extract_listing_links(self, soup: BeautifulSoup, base_url: str) -> List[str]:
         """Извлечение ссылок на объявления из списка Immowelt"""
         links = []
         
-        # Специфические селекторы для Immowelt
-        selectors = [
-            'div[data-test="result-list-item"] a[href*="/expose/"]',  # Основной селектор для результатов
-            'a[href*="/expose/"]',  # Любые ссылки на объявления
-            'article a[href*="/expose/"]',  # Альтернативный селектор
-            '.listitem_wrap a'  # Старый формат
-        ]
+        # Ищем все ссылки с /expose/ в href
+        all_links = soup.find_all('a', href=True)
         
-        for selector in selectors:
-            elements = soup.select(selector)
-            for element in elements:
-                href = element.get('href')
-                if href and '/expose/' in href:
-                    # Immowelt может использовать относительные ссылки
-                    if href.startswith('/'):
-                        full_url = 'https://www.immowelt.de' + href
-                    elif not href.startswith('http'):
-                        full_url = urljoin(base_url, href)
-                    else:
-                        full_url = href
-                    
-                    if full_url not in links:
-                        links.append(full_url)
+        for element in all_links:
+            href = element.get('href')
+            if href and '/expose/' in href:
+                # Immowelt использует полные URL
+                if href.startswith('http'):
+                    full_url = href
+                elif href.startswith('/'):
+                    full_url = 'https://www.immowelt.de' + href
+                else:
+                    full_url = urljoin(base_url, href)
+                
+                # Добавляем только уникальные ссылки
+                if full_url not in links:
+                    links.append(full_url)
         
         self.logger.info(f"Найдено {len(links)} ссылок на объявления Immowelt")
         return links

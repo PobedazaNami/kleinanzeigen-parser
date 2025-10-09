@@ -122,7 +122,12 @@ docker-compose restart
 docker-compose down
 docker-compose build --no-cache
 docker-compose up -d
+
+# Миграция базы данных (если обновляетесь с версии до 09.10.2025)
+docker-compose exec parser python migrate_db.py
 ```
+
+> ⚠️ **Важно**: Если парсер не отправляет уведомления от Immowelt/ImmobilienScout24 после обновления, запустите миграцию базы данных: `python migrate_db.py`
 
 ## 📊 Мониторинг
 

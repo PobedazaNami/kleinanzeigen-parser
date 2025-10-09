@@ -1,12 +1,13 @@
 name: Kleinanzeigen Parser
 
+# ОТКЛЮЧЕНО - работает на сервере
 # Запуск каждые 30 минут
 on:
-  schedule:
-    - cron: '*/30 * * * *'  # каждые 30 минут
+  # schedule:
+  #   - cron: '*/30 * * * *'  # каждые 30 минут
   workflow_dispatch:        # можно запустить вручную
-  push:                    # для тестирования при коммите
-    branches: [ main ]
+  # push:                    # для тестирования при коммите
+  #   branches: [ main ]
 
 jobs:
   parse:

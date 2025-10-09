@@ -34,11 +34,12 @@ jobs:
           parser-database-
     
     - name: Create directories and config
+      env:
+        FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
       run: |
         mkdir -p data logs
         cp config.example.json config.json
-        # Добавляем Firecrawl API key в config
-        python3 -c "import json; config = json.load(open('config.json')); config['firecrawl_api_key'] = '${{ secrets.FIRECRAWL_API_KEY }}'; json.dump(config, open('config.json', 'w'), indent=2)"
+        python3 inject_api_key.py
     
     - name: Run database migration
       run: |

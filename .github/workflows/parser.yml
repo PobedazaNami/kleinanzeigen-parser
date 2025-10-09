@@ -38,14 +38,7 @@ jobs:
         mkdir -p data logs
         cp config.example.json config.json
         # Добавляем Firecrawl API key в config
-        python3 -c "
-        import json
-        with open('config.json', 'r') as f:
-            config = json.load(f)
-        config['firecrawl_api_key'] = '${{ secrets.FIRECRAWL_API_KEY }}'
-        with open('config.json', 'w') as f:
-            json.dump(config, f, indent=2)
-        "
+        python3 -c "import json; config = json.load(open('config.json')); config['firecrawl_api_key'] = '${{ secrets.FIRECRAWL_API_KEY }}'; json.dump(config, open('config.json', 'w'), indent=2)"
     
     - name: Run database migration
       run: |

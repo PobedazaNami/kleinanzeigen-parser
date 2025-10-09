@@ -190,15 +190,19 @@ class ImmobilienScout24Parser(BaseParser):
             # Извлечение цены (немецкий формат)
             price = None
             price_selectors = [
-                'dd[class*="price"]',
-                'div[class*="price"]',
-                'span[class*="price"]',
+                'dd[class*="rice"]',  # Kaltmiete
+                'dd[class*="iete"]',  # Miete
+                'div[class*="rice"]',
+                'span[class*="rice"]',
+                'div[data-qa="is24-price-value"]',
+                'dd[data-qa="is24-preis-main"]',
             ]
             
             for selector in price_selectors:
                 price_elem = soup.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
+                    self.logger.debug(f"Найдена цена (selector {selector}): {price_text}")
                     price_text = re.sub(r'[^\d,.]', '', price_text)
                     
                     # Немецкий формат: 753.71 € = 753 евро
@@ -213,9 +217,31 @@ class ImmobilienScout24Parser(BaseParser):
                     
                     try:
                         price = int(float(price_text))
+                        self.logger.debug(f"Цена успешно распознана: {price}€")
                         break
                     except ValueError:
                         continue
+            
+            # Если не нашли через селекторы, ищем в тексте
+            if not price:
+                self.logger.debug("Цена не найдена через селекторы, ищем в тексте")
+                page_text = soup.get_text()
+                # Ищем "Kaltmiete" или просто цену в евро
+                price_patterns = [
+                    r'Kaltmiete[:\s]*(\d+(?:[.,]\d+)?)\s*€',
+                    r'(\d+(?:[.,]\d+)?)\s*€\s*Kaltmiete',
+                    r'Miete[:\s]*(\d+(?:[.,]\d+)?)\s*€',
+                ]
+                for pattern in price_patterns:
+                    match = re.search(pattern, page_text, re.IGNORECASE)
+                    if match:
+                        price_str = match.group(1).replace('.', '').replace(',', '.')
+                        try:
+                            price = int(float(price_str))
+                            self.logger.debug(f"Цена найдена в тексте: {price}€")
+                            break
+                        except ValueError:
+                            continue
             
             # Извлечение размера и количества комнат
             size = None

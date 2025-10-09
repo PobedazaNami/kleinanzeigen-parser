@@ -40,7 +40,17 @@ class ImmoweltParser(BaseParser):
         
         if self.use_firecrawl and self.firecrawl_api_key and FIRECRAWL_AVAILABLE:
             try:
+                # Временно отключаем debug логирование чтобы избежать маскирования секретов GitHub
+                import logging
+                firecrawl_logger = logging.getLogger('firecrawl')
+                original_level = firecrawl_logger.level
+                firecrawl_logger.setLevel(logging.WARNING)
+                
                 self.firecrawl = FirecrawlApp(api_key=self.firecrawl_api_key)
+                
+                # Восстанавливаем уровень логирования
+                firecrawl_logger.setLevel(original_level)
+                
                 self.logger.info("✅ Firecrawl API инициализирован для Immowelt")
             except Exception as e:
                 self.logger.error(f"❌ Ошибка инициализации Firecrawl: {e}")

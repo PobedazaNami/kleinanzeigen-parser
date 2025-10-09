@@ -22,6 +22,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from kleinanzeigen_parser import KleinanzeigenParser
 from immowelt_parser import ImmoweltParser
+from immobilienscout_parser import ImmobilienScout24Parser
 
 class ProductionRunner:
     """Класс для запуска парсера в продакшене"""
@@ -155,6 +156,8 @@ class ProductionRunner:
             return 'kleinanzeigen'
         elif 'immowelt.de' in domain:
             return 'immowelt'
+        elif 'immobilienscout24.de' in domain:
+            return 'immobilienscout24'
         else:
             self.logger.warning(f"Неизвестный тип сайта для URL: {url}, используем kleinanzeigen по умолчанию")
             return 'kleinanzeigen'
@@ -163,12 +166,14 @@ class ProductionRunner:
         """Группировка URL по типам сайтов"""
         grouped = {
             'kleinanzeigen': [],
-            'immowelt': []
+            'immowelt': [],
+            'immobilienscout24': []
         }
         
         for url in urls:
             site_type = self.detect_site_type(url)
-            grouped[site_type].append(url)
+            if site_type in grouped:
+                grouped[site_type].append(url)
         
         return grouped
     
@@ -236,6 +241,18 @@ class ProductionRunner:
                 
                 immowelt_parser = ImmoweltParser("config_immowelt_temp.json")
                 self.parsers.append(('Immowelt', immowelt_parser))
+            
+            if grouped_urls['immobilienscout24']:
+                self.logger.info(f"Создание парсера для ImmobilienScout24 ({len(grouped_urls['immobilienscout24'])} URL)")
+                scout_config = config.copy()
+                scout_config['search_urls'] = grouped_urls['immobilienscout24']
+                
+                # Сохраняем временный конфиг для immobilienscout24
+                with open('config_scout_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(scout_config, f, ensure_ascii=False, indent=2)
+                
+                scout_parser = ImmobilienScout24Parser("config_scout_temp.json")
+                self.parsers.append(('ImmobilienScout24', scout_parser))
             
             if not self.parsers:
                 raise ValueError("Не создано ни одного парсера. Проверьте URL в конфигурации.")
@@ -321,7 +338,7 @@ class ProductionRunner:
                 pass
             
             # Удаляем временные конфиги
-            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json']:
+            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json', 'config_scout_temp.json']:
                 if os.path.exists(temp_config):
                     os.remove(temp_config)
     
@@ -371,6 +388,17 @@ class ProductionRunner:
                 immowelt_parser = ImmoweltParser("config_immowelt_temp.json")
                 self.parsers.append(('Immowelt', immowelt_parser))
             
+            if grouped_urls['immobilienscout24']:
+                self.logger.info(f"Создание парсера для ImmobilienScout24 ({len(grouped_urls['immobilienscout24'])} URL)")
+                scout_config = config.copy()
+                scout_config['search_urls'] = grouped_urls['immobilienscout24']
+                
+                with open('config_scout_temp.json', 'w', encoding='utf-8') as f:
+                    json.dump(scout_config, f, ensure_ascii=False, indent=2)
+                
+                scout_parser = ImmobilienScout24Parser("config_scout_temp.json")
+                self.parsers.append(('ImmobilienScout24', scout_parser))
+            
             if not self.parsers:
                 raise ValueError("Не создано ни одного парсера. Проверьте URL в конфигурации.")
             
@@ -415,7 +443,7 @@ class ProductionRunner:
             self.logger.info("🛑 Single-run завершен")
             
             # Удаляем временные конфиги
-            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json']:
+            for temp_config in ['config_kleinanzeigen_temp.json', 'config_immowelt_temp.json', 'config_scout_temp.json']:
                 if os.path.exists(temp_config):
                     os.remove(temp_config)
 

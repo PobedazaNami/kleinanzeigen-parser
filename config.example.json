@@ -12,7 +12,8 @@
   },
   "search_urls": [
     "https://www.kleinanzeigen.de/s-wohnung-mieten/darmstadt/wohnung/k0c203l4888",
-    "https://www.immowelt.de/liste/darmstadt/wohnungen/mieten?d=true&sd=DESC&sf=TIMESTAMP&sp=1"
+    "https://www.immowelt.de/liste/darmstadt/wohnungen/mieten?d=true&sd=DESC&sf=TIMESTAMP&sp=1",
+    "https://www.immobilienscout24.de/Suche/de/hessen/darmstadt/wohnung-mieten?enteredFrom=one_step_search"
   ],
   "filters": {
     "exclude_titles": ["WG", "wg", "Wg", "Zwischenmiete", "möbliert", "furnished"],
@@ -33,6 +34,7 @@
     "random_delay_max": 8,
     "max_listings_per_run": 50,
     "max_listings_immowelt": 2,
+    "max_listings_immobilienscout24": 2,
     "user_agents_rotation": true
   },
   "database": {

@@ -2,6 +2,7 @@
 """
 Immowelt Parser для квартир в аренду
 Парсит объявления с Immowelt.de и отправляет уведомления в Telegram
+Использует Firecrawl API для обхода защиты от ботов
 """
 
 import requests
@@ -9,86 +10,265 @@ from bs4 import BeautifulSoup
 import json
 import time
 import logging
-import sqlite3
 import re
 import os
-import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 import hashlib
-import schedule
-import telegram
-from telegram import Bot
-import traceback
-import sys
-from dotenv import load_dotenv
-import requests as sync_requests
 
-# Импортируем базовый класс
-from kleinanzeigen_parser import KleinanzeigenParser
+from base_parser import BaseParser
+
+# Попытка импортировать Firecrawl
+try:
+    from firecrawl import FirecrawlApp
+    FIRECRAWL_AVAILABLE = True
+except ImportError:
+    FIRECRAWL_AVAILABLE = False
 
 
-class ImmoweltParser(KleinanzeigenParser):
-    """Класс для парсинга объявлений с Immowelt.de"""
+class ImmoweltParser(BaseParser):
+    """Класс для парсинга объявлений с Immowelt.de с использованием Firecrawl API"""
     
     def __init__(self, config_file: str = "config.json"):
         """Инициализация парсера для Immowelt"""
-        super().__init__(config_file)
+        super().__init__(config_file, parser_name="immowelt")
         
-        # Создаем отдельную session для Immowelt с более простыми headers
+        # Инициализация Firecrawl
+        self.firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
+        self.use_firecrawl = self.config.get('immowelt_settings', {}).get('use_firecrawl', True)
+        
+        if self.use_firecrawl and self.firecrawl_api_key and FIRECRAWL_AVAILABLE:
+            try:
+                self.firecrawl = FirecrawlApp(api_key=self.firecrawl_api_key)
+                self.logger.info("✅ Firecrawl API инициализирован для Immowelt")
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка инициализации Firecrawl: {e}")
+                self.firecrawl = None
+                self.use_firecrawl = False
+        else:
+            self.firecrawl = None
+            if self.use_firecrawl and not self.firecrawl_api_key:
+                self.logger.warning("⚠️  FIRECRAWL_API_KEY не установлен в ENV")
+                self.use_firecrawl = False
+        
+        # Создаем новую session для Immowelt с улучшенной имитацией браузера
         self.session = requests.Session()
         
-        # Более простые headers для Immowelt
-        # ВАЖНО: НЕ используем 'br' (brotli) в Accept-Encoding, т.к. requests неправильно его декодирует
+        # Более полный набор headers для имитации реального браузера
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate',  # БЕЗ brotli!
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'DNT': '1',
         })
         
-        self.logger.info("Инициализирован парсер для Immowelt.de с отдельной session")
+        self.logger.info(f"Инициализирован парсер для Immowelt.de (Firecrawl: {'✅' if self.use_firecrawl else '❌'})")
+    
+    def get_page_with_firecrawl(self, url: str) -> Optional[BeautifulSoup]:
+        """Получение страницы через Firecrawl API"""
+        if not self.use_firecrawl or not self.firecrawl:
+            return None
+        
+        try:
+            self.logger.info(f"🔥 Запрос через Firecrawl: {url}")
+            
+            # Используем scrape метод Firecrawl (правильное API v2)
+            result = self.firecrawl.scrape(
+                url,
+                formats=['html'],
+                only_main_content=False,
+                wait_for=2000  # Ждем 2 секунды для загрузки JavaScript
+            )
+            
+            if result and hasattr(result, 'html') and result.html:
+                html_content = result.html
+                self.logger.info(f"✅ Получено через Firecrawl: {len(html_content)} символов")
+                return BeautifulSoup(html_content, 'html.parser')
+            elif result and hasattr(result, 'markdown') and result.markdown:
+                html_content = result.markdown
+                self.logger.info(f"✅ Получено через Firecrawl (markdown): {len(html_content)} символов")
+                return BeautifulSoup(html_content, 'html.parser')
+            else:
+                self.logger.warning(f"⚠️  Firecrawl не вернул HTML для {url}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка Firecrawl для {url}: {e}")
+            return None
+    
+    def get_page(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
+        """Переопределенный метод получения страницы с использованием Firecrawl"""
+        
+        # Сначала пробуем Firecrawl для Immowelt
+        if self.use_firecrawl and 'immowelt.de' in url:
+            soup = self.get_page_with_firecrawl(url)
+            if soup:
+                return soup
+            else:
+                self.logger.warning("⚠️  Firecrawl не сработал, пробуем обычный запрос...")
+        
+        # Fallback на обычный HTTP запрос
+        return super().get_page(url, retries)
     
     def get_initial_cookies(self):
         """Получение начальных cookies с главной страницы Immowelt"""
         try:
             self.logger.info("Получение начальных cookies для Immowelt...")
-            response = self.session.get('https://www.immowelt.de/', timeout=30)
+            
+            # Добавляем задержку для имитации реального пользователя
+            time.sleep(1)
+            
+            # Сначала заходим на главную
+            response = self.session.get('https://www.immowelt.de/', timeout=30, allow_redirects=True)
+            
+            self.logger.debug(f"Статус главной страницы: {response.status_code}")
+            self.logger.debug(f"Получено cookies: {len(self.session.cookies)}")
+            
             if response.status_code == 200:
                 self.logger.info("Cookies для Immowelt получены успешно")
+                
+                # Обновляем Referer для последующих запросов
+                self.session.headers['Referer'] = 'https://www.immowelt.de/'
                 return True
             else:
                 self.logger.warning(f"Не удалось получить cookies для Immowelt: {response.status_code}")
+                # Пытаемся получить больше информации
+                self.logger.debug(f"Response text (first 500 chars): {response.text[:500]}")
                 return False
         except Exception as e:
             self.logger.warning(f"Ошибка при получении cookies для Immowelt: {e}")
             return False
     
+    def get_page(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
+        """Переопределенный метод получения страницы для Immowelt с улучшенной имитацией браузера"""
+        for attempt in range(retries):
+            try:
+                # Обновляем Referer перед каждым запросом
+                if '/expose/' in url:
+                    # Для страниц объявлений используем страницу поиска как Referer
+                    search_url = None
+                    for surl in self.config.get('search_urls', []):
+                        if 'immowelt.de' in surl:
+                            search_url = surl
+                            break
+                    if search_url:
+                        self.session.headers['Referer'] = search_url
+                else:
+                    self.session.headers['Referer'] = 'https://www.immowelt.de/'
+                
+                # Добавляем случайную задержку для имитации человека
+                if attempt > 0:
+                    import random
+                    delay = random.uniform(2, 5)
+                    self.logger.info(f"Задержка {delay:.1f} сек перед повторной попыткой...")
+                    time.sleep(delay)
+                
+                response = self.session.get(url, timeout=30, allow_redirects=True)
+                
+                self.logger.debug(f"Response status: {response.status_code}, URL: {response.url}")
+                
+                if response.status_code == 403:
+                    error_msg = f"HTTP 403 Forbidden для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.logger.error("Immowelt блокирует запросы. Возможно, нужно использовать прокси или изменить User-Agent.")
+                        self.send_error_notification(error_msg, "БЛОКИРОВКА IMMOWELT")
+                    continue
+                    
+                elif response.status_code >= 400:
+                    error_msg = f"HTTP {response.status_code} для {url}"
+                    self.logger.warning(error_msg)
+                    if attempt == retries - 1:
+                        self.send_error_notification(error_msg, f"HTTP {response.status_code}")
+                
+                response.raise_for_status()
+                
+                if response.encoding != 'utf-8':
+                    response.encoding = 'utf-8'
+                
+                if len(response.text) < 1000:
+                    self.logger.warning(f"Подозрительно короткий ответ ({len(response.text)} символов)")
+                    if attempt == retries - 1:
+                        self.send_error_notification(f"Короткий ответ от {url}", "ПОДОЗРИТЕЛЬНЫЙ ОТВЕТ")
+                
+                return BeautifulSoup(response.text, 'html.parser')
+            
+            except requests.exceptions.HTTPError as e:
+                if attempt < retries - 1:
+                    continue
+                self.logger.error(f"HTTP ошибка: {e}")
+                return None
+                    
+            except requests.exceptions.Timeout:
+                error_msg = f"Таймаут при загрузке {url} (попытка {attempt + 1})"
+                self.logger.warning(error_msg)
+                if attempt == retries - 1:
+                    self.send_error_notification(error_msg, "ТАЙМАУТ")
+                    
+            except requests.exceptions.ConnectionError:
+                error_msg = f"Ошибка соединения с {url} (попытка {attempt + 1})"
+                self.logger.warning(error_msg)
+                if attempt == retries - 1:
+                    self.send_error_notification(error_msg, "ОШИБКА СОЕДИНЕНИЯ")
+                    
+            except Exception as e:
+                error_msg = f"Ошибка при загрузке {url}: {e}"
+                self.logger.error(error_msg)
+                if attempt == retries - 1:
+                    self.send_error_notification(error_msg, "ОШИБКА")
+        
+        return None
+    
     def extract_listing_links(self, soup: BeautifulSoup, base_url: str) -> List[str]:
-        """Извлечение ссылок на объявления из списка Immowelt"""
+        """Извлечение ссылок на объявления из списка Immowelt (только с меткой Neu)"""
         links = []
         
-        # Ищем все ссылки с /expose/ в href
-        all_links = soup.find_all('a', href=True)
+        # Ищем все элементы со значком "Neu" по атрибуту data-testid
+        neu_elements = soup.find_all('span', attrs={'data-testid': 'cardmfe-tag-testid-new'})
         
-        for element in all_links:
-            href = element.get('href')
-            if href and '/expose/' in href:
-                # Immowelt использует полные URL
-                if href.startswith('http'):
-                    full_url = href
-                elif href.startswith('/'):
-                    full_url = 'https://www.immowelt.de' + href
-                else:
-                    full_url = urljoin(base_url, href)
+        self.logger.info(f"Найдено {len(neu_elements)} значков 'Neu' на странице")
+        
+        # Для каждого значка "Neu" ищем ближайшую ссылку на объявление
+        for neu_span in neu_elements:
+            # Поднимаемся вверх по дереву до контейнера карточки
+            container = neu_span
+            for _ in range(20):  # Максимум 20 уровней вверх
+                if container is None:
+                    break
+                container = container.parent
                 
-                # Добавляем только уникальные ссылки
-                if full_url not in links:
-                    links.append(full_url)
+                # Ищем ссылку с /expose/ в этом контейнере
+                if container:
+                    link = container.find('a', href=lambda href: href and '/expose/' in href)
+                    if link:
+                        href = link.get('href')
+                        # Формируем полный URL
+                        if href.startswith('http'):
+                            full_url = href
+                        elif href.startswith('/'):
+                            full_url = 'https://www.immowelt.de' + href
+                        else:
+                            full_url = urljoin(base_url, href)
+                        
+                        # Добавляем только уникальные ссылки
+                        if full_url not in links:
+                            links.append(full_url)
+                            self.logger.debug(f"Найдено новое объявление: {full_url}")
+                        break
         
-        self.logger.info(f"Найдено {len(links)} ссылок на объявления Immowelt")
+        self.logger.info(f"Найдено {len(links)} НОВЫХ объявлений с меткой 'Neu' на Immowelt")
         return links
     
     def extract_listing_date(self, soup: BeautifulSoup) -> Optional[datetime]:
@@ -148,24 +328,6 @@ class ImmoweltParser(KleinanzeigenParser):
             self.logger.warning(f"Ошибка при извлечении даты из Immowelt: {e}")
             return None
     
-    def parse_listings(self):
-        """Основной метод парсинга с ограничением для Immowelt"""
-        # Временно переопределяем max_listings_per_run для Immowelt
-        original_max = self.config.get('settings', {}).get('max_listings_per_run', 50)
-        immowelt_max = self.config.get('settings', {}).get('max_listings_immowelt', 2)
-        
-        # Устанавливаем лимит для Immowelt
-        self.config['settings']['max_listings_per_run'] = immowelt_max
-        self.logger.info(f"Ограничение для Immowelt: максимум {immowelt_max} объявлений")
-        
-        try:
-            # Вызываем родительский метод
-            result = super().parse_listings()
-            return result
-        finally:
-            # Восстанавливаем оригинальное значение
-            self.config['settings']['max_listings_per_run'] = original_max
-    
     def extract_listing_data(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
         """Извлечение данных из отдельного объявления Immowelt"""
         try:
@@ -187,6 +349,7 @@ class ImmoweltParser(KleinanzeigenParser):
             # Извлечение цены
             price = None
             price_selectors = [
+                'span.css-9wpf20',  # Основной селектор для цены на Immowelt
                 'div[data-test="price"] strong',
                 '.hardfact_value strong',
                 'strong[data-test="kaltmiete"]',
@@ -197,13 +360,29 @@ class ImmoweltParser(KleinanzeigenParser):
                 price_elem = soup.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
-                    # Убираем все нецифровые символы кроме запятой и точки
+                    # Убираем все кроме цифр, точек и запятых
                     price_text = re.sub(r'[^\d,.]', '', price_text)
-                    price_match = re.search(r'(\d+(?:[.,]\d+)?)', price_text)
-                    if price_match:
-                        price_str = price_match.group(1).replace('.', '').replace(',', '.')
-                        price = int(float(price_str))
+                    
+                    # В немецком формате: 753.71 € = 753 евро 71 цент
+                    # Заменяем точку на ничего (разделитель тысяч), запятую на точку (десятичная часть)
+                    if ',' in price_text:
+                        # Если есть запятая, это десятичный разделитель
+                        price_text = price_text.replace('.', '').replace(',', '.')
+                    # Если нет запятой, точка - это разделитель тысяч или десятичный
+                    elif '.' in price_text:
+                        parts = price_text.split('.')
+                        if len(parts) == 2 and len(parts[1]) == 2:
+                            # 753.71 - это 753 евро с центами
+                            price_text = price_text  # оставляем как есть
+                        else:
+                            # 1.000 - это разделитель тысяч
+                            price_text = price_text.replace('.', '')
+                    
+                    try:
+                        price = int(float(price_text))
                         break
+                    except ValueError:
+                        continue
             
             # Извлечение размера и количества комнат
             size = None
@@ -229,7 +408,6 @@ class ImmoweltParser(KleinanzeigenParser):
             
             # Альтернативный поиск в структурированных данных
             if not size or not rooms:
-                # Ищем в sd-cell (structured data cells)
                 cells = soup.select('sd-cell')
                 for cell in cells:
                     cell_text = cell.get_text()
@@ -248,6 +426,7 @@ class ImmoweltParser(KleinanzeigenParser):
             # Извлечение локации
             location = None
             location_selectors = [
+                'span.css-wpv6zq',  # Основной селектор для адреса на Immowelt
                 'div[data-test="address"]',
                 'span.location',
                 '.expose_header .address',
@@ -281,14 +460,10 @@ class ImmoweltParser(KleinanzeigenParser):
                     description = description_elem.get_text(strip=True)
                     break
             
-            # Извлечение даты публикации
-            listing_date = self.extract_listing_date(soup)
-            
-            # Проверяем, что объявление опубликовано недавно
-            if not self.is_listing_from_today(listing_date):
-                date_str = listing_date.strftime('%d.%m.%Y') if listing_date else "неизвестна"
-                self.logger.info(f"Объявление Immowelt пропущено - дата публикации: {date_str}: {title}")
-                return "SKIPPED_BY_DATE"
+            # Для Immowelt дата не нужна - мы фильтруем по значку "Neu"
+            # Все найденные объявления уже новые, поэтому используем сегодняшнюю дату
+            listing_date = datetime.now()
+            self.logger.debug("Для Immowelt используем текущую дату (фильтр по значку Neu)")
             
             # Извлечение ID объявления из URL
             listing_id_match = re.search(r'/expose/(\d+)', url)
@@ -308,15 +483,14 @@ class ImmoweltParser(KleinanzeigenParser):
                 'size': size,
                 'rooms': rooms,
                 'location': location,
-                'description': description[:500] if description else "",  # Ограничиваем длину
+                'description': description[:500] if description else "",
                 'url': url,
                 'date_posted': listing_date.isoformat() if listing_date else None,
                 'date_found': datetime.now().isoformat(),
                 'hash': listing_hash
             }
             
-            date_str = listing_date.strftime('%d.%m.%Y') if listing_date else "сегодня"
-            self.logger.info(f"Извлечены данные Immowelt: {title} - {price}€ - {location} - дата: {date_str}")
+            self.logger.info(f"✅ Извлечены данные Immowelt (NEW): {title} - {price}€ - {location}")
             return listing_data
             
         except Exception as e:
@@ -324,6 +498,24 @@ class ImmoweltParser(KleinanzeigenParser):
             import traceback
             self.logger.debug(traceback.format_exc())
             return None
+
+    def parse_listings(self):
+        """Основной метод парсинга с ограничением для Immowelt"""
+        # Временно переопределяем max_listings_per_run для Immowelt
+        original_max = self.config.get('settings', {}).get('max_listings_per_run', 50)
+        immowelt_max = self.config.get('settings', {}).get('max_listings_immowelt', 2)
+        
+        # Устанавливаем лимит для Immowelt
+        self.config['settings']['max_listings_per_run'] = immowelt_max
+        self.logger.info(f"Ограничение для Immowelt: максимум {immowelt_max} объявлений")
+        
+        try:
+            # Вызываем родительский метод
+            result = super().parse_listings()
+            return result
+        finally:
+            # Восстанавливаем оригинальное значение
+            self.config['settings']['max_listings_per_run'] = original_max
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ class ImmobilienScout24Parser(BaseParser):
         super().__init__(config_file, parser_name="immobilienscout24")
         
         # Инициализация Firecrawl
-        self.firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
+        self.firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY') or self.config.get('firecrawl_api_key')
         self.use_firecrawl = self.config.get('immobilienscout24_settings', {}).get('use_firecrawl', True)
         
         if self.use_firecrawl and self.firecrawl_api_key and FIRECRAWL_AVAILABLE:

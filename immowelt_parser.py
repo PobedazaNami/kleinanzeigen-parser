@@ -151,92 +151,16 @@ class ImmoweltParser(BaseParser):
             self.logger.warning(f"Ошибка при получении cookies для Immowelt: {e}")
             return False
     
-    def get_page(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
-        """Переопределенный метод получения страницы для Immowelt с улучшенной имитацией браузера"""
-        for attempt in range(retries):
-            try:
-                # Обновляем Referer перед каждым запросом
-                if '/expose/' in url:
-                    # Для страниц объявлений используем страницу поиска как Referer
-                    search_url = None
-                    for surl in self.config.get('search_urls', []):
-                        if 'immowelt.de' in surl:
-                            search_url = surl
-                            break
-                    if search_url:
-                        self.session.headers['Referer'] = search_url
-                else:
-                    self.session.headers['Referer'] = 'https://www.immowelt.de/'
-                
-                # Добавляем случайную задержку для имитации человека
-                if attempt > 0:
-                    import random
-                    delay = random.uniform(2, 5)
-                    self.logger.info(f"Задержка {delay:.1f} сек перед повторной попыткой...")
-                    time.sleep(delay)
-                
-                response = self.session.get(url, timeout=30, allow_redirects=True)
-                
-                self.logger.debug(f"Response status: {response.status_code}, URL: {response.url}")
-                
-                if response.status_code == 403:
-                    error_msg = f"HTTP 403 Forbidden для {url}"
-                    self.logger.warning(error_msg)
-                    if attempt == retries - 1:
-                        self.logger.error("Immowelt блокирует запросы. Возможно, нужно использовать прокси или изменить User-Agent.")
-                        self.send_error_notification(error_msg, "БЛОКИРОВКА IMMOWELT")
-                    continue
-                    
-                elif response.status_code >= 400:
-                    error_msg = f"HTTP {response.status_code} для {url}"
-                    self.logger.warning(error_msg)
-                    if attempt == retries - 1:
-                        self.send_error_notification(error_msg, f"HTTP {response.status_code}")
-                
-                response.raise_for_status()
-                
-                if response.encoding != 'utf-8':
-                    response.encoding = 'utf-8'
-                
-                if len(response.text) < 1000:
-                    self.logger.warning(f"Подозрительно короткий ответ ({len(response.text)} символов)")
-                    if attempt == retries - 1:
-                        self.send_error_notification(f"Короткий ответ от {url}", "ПОДОЗРИТЕЛЬНЫЙ ОТВЕТ")
-                
-                return BeautifulSoup(response.text, 'html.parser')
-            
-            except requests.exceptions.HTTPError as e:
-                if attempt < retries - 1:
-                    continue
-                self.logger.error(f"HTTP ошибка: {e}")
-                return None
-                    
-            except requests.exceptions.Timeout:
-                error_msg = f"Таймаут при загрузке {url} (попытка {attempt + 1})"
-                self.logger.warning(error_msg)
-                if attempt == retries - 1:
-                    self.send_error_notification(error_msg, "ТАЙМАУТ")
-                    
-            except requests.exceptions.ConnectionError:
-                error_msg = f"Ошибка соединения с {url} (попытка {attempt + 1})"
-                self.logger.warning(error_msg)
-                if attempt == retries - 1:
-                    self.send_error_notification(error_msg, "ОШИБКА СОЕДИНЕНИЯ")
-                    
-            except Exception as e:
-                error_msg = f"Ошибка при загрузке {url}: {e}"
-                self.logger.error(error_msg)
-                if attempt == retries - 1:
-                    self.send_error_notification(error_msg, "ОШИБКА")
-        
-        return None
-    
     def extract_listing_links(self, soup: BeautifulSoup, base_url: str) -> List[str]:
         """Извлечение ссылок на объявления из списка Immowelt (только с меткой Neu)"""
         links = []
         
-        # Ищем все элементы со значком "Neu" по атрибуту data-testid
+        # Ищем все элементы со значком "Neu" - пробуем разные варианты
         neu_elements = soup.find_all('span', attrs={'data-testid': 'cardmfe-tag-testid-new'})
+        
+        # Если не нашли через data-testid, ищем по тексту
+        if not neu_elements:
+            neu_elements = soup.find_all('span', string=lambda x: x and x.strip() == 'Neu')
         
         self.logger.info(f"Найдено {len(neu_elements)} значков 'Neu' на странице")
         

@@ -83,7 +83,7 @@ jobs:
               echo "⚠️ docker compose not found. Trying to install compose plugin..."
               if command -v apt-get >/dev/null 2>&1; then
                 apt-get update -y && apt-get install -y docker-compose-plugin || true
-                if docker compose version >/dev/null 2}&1; then
+                if docker compose version >/dev/null 2>&1; then
                   DC="docker compose"
                 else
                   echo "❌ docker compose still not available."; exit 1
@@ -93,12 +93,7 @@ jobs:
               fi
             fi
 
-            # Compose command (v2 or v1)
-            if docker compose version >/dev/null 2>&1; then
-              DC="docker compose"
-            else
-              DC="docker-compose"
-            fi
+            # DC is set above to either 'docker compose' or 'docker-compose'
 
             echo "🛑 Stopping containers..."
             $DC -f docker-compose.yml down || true

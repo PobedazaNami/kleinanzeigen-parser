@@ -74,17 +74,17 @@ jobs:
               fi
             fi
 
-            # Determine compose command
+            # Determine compose command and create function
             if docker compose version >/dev/null 2>&1; then
-              DC="docker compose"
+              dc_cmd() { docker compose "$@"; }
             elif command -v docker-compose >/dev/null 2>&1; then
-              DC="docker-compose"
+              dc_cmd() { docker-compose "$@"; }
             else
               echo "⚠️ docker compose not found. Trying to install compose plugin..."
               if command -v apt-get >/dev/null 2>&1; then
                 apt-get update -y && apt-get install -y docker-compose-plugin || true
                 if docker compose version >/dev/null 2>&1; then
-                  DC="docker compose"
+                  dc_cmd() { docker compose "$@"; }
                 else
                   echo "❌ docker compose still not available."; exit 1
                 fi
@@ -93,16 +93,16 @@ jobs:
               fi
             fi
 
-            # DC is set above to either 'docker compose' or 'docker-compose'
+            # dc_cmd function is set above to call either 'docker compose' or 'docker-compose'
 
             echo "🛑 Stopping containers..."
-            "$DC" -f docker-compose.yml down || true
+            dc_cmd -f docker-compose.yml down || true
 
             echo "🔨 Building image..."
-            "$DC" -f docker-compose.yml build --no-cache miniapp
+            dc_cmd -f docker-compose.yml build --no-cache miniapp
 
             echo "🚀 Starting containers..."
-            "$DC" -f docker-compose.yml up -d miniapp
+            dc_cmd -f docker-compose.yml up -d miniapp
 
             echo "⏳ Waiting for startup..."
             sleep 5

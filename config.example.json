@@ -39,7 +39,11 @@
   },
   "database": {
     "cleanup_old_listings_days": 30,
-    "vacuum_interval_hours": 24
+    "vacuum_interval_hours": 24,
+    "path": "data/bot_users.db"
+  },
+  "bot": {
+    "admin_ids": []
   },
   "logging": {
     "level": "INFO",

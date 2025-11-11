@@ -96,13 +96,13 @@ jobs:
             # DC is set above to either 'docker compose' or 'docker-compose'
 
             echo "🛑 Stopping containers..."
-            $DC -f docker-compose.yml down || true
+            "$DC" -f docker-compose.yml down || true
 
             echo "🔨 Building image..."
-            $DC -f docker-compose.yml build --no-cache miniapp
+            "$DC" -f docker-compose.yml build --no-cache miniapp
 
             echo "🚀 Starting containers..."
-            $DC -f docker-compose.yml up -d miniapp
+            "$DC" -f docker-compose.yml up -d miniapp
 
             echo "⏳ Waiting for startup..."
             sleep 5

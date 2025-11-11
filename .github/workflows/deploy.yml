@@ -20,41 +20,55 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
             set -e
-            
+
             echo "🚀 Starting deployment..."
-            
-            # Navigate to project directory
-            cd /opt/kleinanzeigen-parser || exit 1
-            
-            # Pull latest changes
-            echo "📥 Pulling latest code..."
-            git fetch origin
-            git reset --hard origin/main
-            
-            # Stop running containers
+
+            REPO_DIR="/opt/kleinanzeigen-parser"
+
+            # Ensure base directory exists and repo is present
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "📦 First-time setup: creating directory and cloning repo"
+              sudo mkdir -p "$REPO_DIR"
+              sudo chown -R "$USER":"$USER" "$REPO_DIR" || true
+              cd "$REPO_DIR"
+              git clone https://github.com/${{ github.repository }} .
+            else
+              echo "📥 Updating existing repo"
+              cd "$REPO_DIR"
+              git fetch --all
+              git reset --hard origin/main
+            fi
+
+            # Compose command (v2 or v1)
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            else
+              DC="docker-compose"
+            fi
+
             echo "🛑 Stopping containers..."
-            docker compose -f docker-compose.yml down || true
-            
-            # Build new image
-            echo "🔨 Building new image..."
-            docker compose -f docker-compose.yml build --no-cache miniapp
-            
-            # Start containers
+            $DC -f docker-compose.yml down || true
+
+            echo "🔨 Building image..."
+            $DC -f docker-compose.yml build --no-cache miniapp
+
             echo "🚀 Starting containers..."
-            docker compose -f docker-compose.yml up -d miniapp
-            
-            # Wait for startup
+            $DC -f docker-compose.yml up -d miniapp
+
+            echo "⏳ Waiting for startup..."
             sleep 5
-            
-            # Check status
+
             echo "✅ Checking container status..."
-            docker ps | grep miniapp
-            
-            # Show logs
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | (grep miniapp || true)
+
             echo "📝 Recent logs:"
-            docker logs miniapp --tail 20
-            
+            docker logs miniapp --tail 50 || true
+
+            # Warn if env file is missing
+            if [ ! -f "$REPO_DIR/.env.miniapp" ]; then
+              echo "⚠️ WARNING: .env.miniapp not found in $REPO_DIR — container may not have required env vars"
+            fi
+
             echo "✅ Deployment completed!"

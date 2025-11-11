@@ -27,19 +27,24 @@ jobs:
 
             REPO_DIR="/opt/kleinanzeigen-parser"
 
-            # Ensure base directory exists and repo is present
-            if [ ! -d "$REPO_DIR/.git" ]; then
-              echo "📦 First-time setup: creating directory and cloning repo"
-              sudo mkdir -p "$REPO_DIR"
-              sudo chown -R "$USER":"$USER" "$REPO_DIR" || true
-              cd "$REPO_DIR"
-              git clone https://github.com/${{ github.repository }} .
-            else
-              echo "📥 Updating existing repo"
-              cd "$REPO_DIR"
-              git fetch --all
-              git reset --hard origin/main
+            # Ensure base directory exists with proper permissions
+            sudo mkdir -p "$REPO_DIR"
+            sudo chown -R "$USER":"$USER" "$REPO_DIR" || true
+            
+            cd "$REPO_DIR"
+            
+            # Initialize git repo if not present
+            if [ ! -d ".git" ]; then
+              echo "📦 First-time setup: initializing git repo"
+              git init
+              git remote add origin https://github.com/${{ github.repository }} || true
             fi
+            
+            # Fetch and reset to latest main
+            echo "📥 Fetching latest code from GitHub..."
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
 
             # Compose command (v2 or v1)
             if docker compose version >/dev/null 2>&1; then

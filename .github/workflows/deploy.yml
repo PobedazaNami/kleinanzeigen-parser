@@ -98,24 +98,27 @@ jobs:
             echo "🛑 Stopping containers..."
             dc_cmd -f docker-compose.yml down || true
 
-            echo "🔨 Building image..."
-            dc_cmd -f docker-compose.yml build --no-cache miniapp
+            echo "🔨 Building images..."
+            dc_cmd -f docker-compose.yml build --no-cache
 
             echo "🚀 Starting containers..."
-            dc_cmd -f docker-compose.yml up -d miniapp
+            dc_cmd -f docker-compose.yml up -d
 
             echo "⏳ Waiting for startup..."
             sleep 5
 
             echo "✅ Checking container status..."
-            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | (grep miniapp || true)
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
-            echo "📝 Recent logs:"
-            docker logs miniapp --tail 50 || true
+            echo "📝 Recent logs (kleinanzeigen-parser):"
+            docker logs kleinanzeigen_parser --tail 50 || true
+
+            echo "📝 Recent logs (telegram-bot):"
+            docker logs telegram_bot --tail 50 || true
 
             # Warn if env file is missing
-            if [ ! -f "$REPO_DIR/.env.miniapp" ]; then
-              echo "⚠️ WARNING: .env.miniapp not found in $REPO_DIR — container may not have required env vars"
+            if [ ! -f "$REPO_DIR/.env" ]; then
+              echo "⚠️ WARNING: .env not found in $REPO_DIR — containers may not have required env vars"
             fi
 
             echo "✅ Deployment completed!"

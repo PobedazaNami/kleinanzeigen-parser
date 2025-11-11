@@ -1,0 +1,60 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            
+            echo "🚀 Starting deployment..."
+            
+            # Navigate to project directory
+            cd /opt/kleinanzeigen-parser || exit 1
+            
+            # Pull latest changes
+            echo "📥 Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Stop running containers
+            echo "🛑 Stopping containers..."
+            docker compose -f docker-compose.yml down || true
+            
+            # Build new image
+            echo "🔨 Building new image..."
+            docker compose -f docker-compose.yml build --no-cache miniapp
+            
+            # Start containers
+            echo "🚀 Starting containers..."
+            docker compose -f docker-compose.yml up -d miniapp
+            
+            # Wait for startup
+            sleep 5
+            
+            # Check status
+            echo "✅ Checking container status..."
+            docker ps | grep miniapp
+            
+            # Show logs
+            echo "📝 Recent logs:"
+            docker logs miniapp --tail 20
+            
+            echo "✅ Deployment completed!"

@@ -14,10 +14,38 @@ services:
       - TZ=Europe/Berlin
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
     mem_limit: 256m
     cpu_count: 1
     healthcheck:
       test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/listings.db').execute('SELECT 1')"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 1m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  
+  telegram-bot:
+    build: .
+    container_name: telegram_bot
+    restart: unless-stopped
+    command: python bot.py
+    volumes:
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+      - ./config.json:/app/config.json:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Berlin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    mem_limit: 128m
+    cpu_count: 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/bot_users.db').execute('SELECT 1')"]
       interval: 5m
       timeout: 30s
       retries: 3
@@ -32,4 +60,8 @@ volumes:
   parser_data:
     driver: local
   parser_logs:
+    driver: local
+  bot_data:
+    driver: local
+  bot_logs:
     driver: local

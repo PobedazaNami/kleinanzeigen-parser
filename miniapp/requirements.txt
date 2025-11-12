@@ -1,0 +1,7 @@
+beautifulsoup4==4.12.3
+requests==2.32.3
+pymongo==4.8.0
+python-telegram-bot[job-queue]==20.8
+pytz==2024.1
+python-dotenv==1.0.1
+firecrawl-py>=1.0.0

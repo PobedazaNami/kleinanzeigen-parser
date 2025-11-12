@@ -1,0 +1,30 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  TZ=Europe/Berlin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  tzdata \
+  && rm -rf /var/lib/apt/lists/* \
+  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Only copy miniapp requirements for lean build
+COPY miniapp/requirements.txt /app/miniapp_requirements.txt
+RUN pip install --no-cache-dir -r /app/miniapp_requirements.txt
+
+# Copy miniapp source
+COPY miniapp /app/miniapp
+
+RUN mkdir -p /app/logs
+
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+HEALTHCHECK --interval=5m --timeout=30s --start-period=20s --retries=3 \
+  CMD python -c "import importlib,sys;importlib.import_module('miniapp.main');sys.exit(0)" || exit 1
+
+CMD ["python", "-m", "miniapp.main"]

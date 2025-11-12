@@ -54,6 +54,34 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  miniapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.miniapp
+    container_name: miniapp
+    restart: unless-stopped
+    volumes:
+      - miniapp_logs:/app/logs
+      - ./miniapp/.env:/app/miniapp/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Berlin
+    env_file:
+      - ./miniapp/.env
+    mem_limit: 512m
+    cpu_count: 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import importlib,sys;importlib.import_module('miniapp.main');sys.exit(0)"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   parser_data:
     driver: local
@@ -62,4 +90,6 @@ volumes:
   bot_data:
     driver: local
   bot_logs:
+    driver: local
+  miniapp_logs:
     driver: local

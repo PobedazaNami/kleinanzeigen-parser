@@ -96,13 +96,36 @@ jobs:
             # dc_cmd function is set above to call either 'docker compose' or 'docker-compose'
 
             echo "🛑 Stopping containers..."
-            dc_cmd -f docker-compose.yml down || true
+            # Stop stack and remove orphans to avoid stale containers
+            dc_cmd -f docker-compose.yml down --remove-orphans || true
+
+            echo "🧹 Removing conflicting containers if any..."
+            docker rm -f miniapp || true
+            docker rm -f telegram_bot || true
+            docker rm -f kleinanzeigen_parser || true
+
+            echo "🧹 Checking and cleaning mismatched named volumes (non-interactive)..."
+            # These are the known named volumes in docker-compose.yml
+            for VOL in \
+              kleinanzeigen-parser_parser_data \
+              kleinanzeigen-parser_parser_logs \
+              kleinanzeigen-parser_bot_data \
+              kleinanzeigen-parser_bot_logs \
+              kleinanzeigen-parser_miniapp_logs; do
+              if docker volume ls -q | grep -q "^${VOL}$"; then
+                # Try inspecting; if inspect fails or we need a guaranteed clean start, remove it
+                # WARNING: this deletes data in the volume. If you need to preserve data, remove this block.
+                echo "⚠️ Removing volume ${VOL} to resolve config mismatch (data will be lost)"
+                docker volume rm -f "${VOL}" || true
+              fi
+            done
 
             echo "🔨 Building images..."
             dc_cmd -f docker-compose.yml build --no-cache
 
             echo "🚀 Starting containers..."
-            dc_cmd -f docker-compose.yml up -d
+            # Force recreate to avoid interactive prompts and ensure latest config is applied
+            dc_cmd -f docker-compose.yml up -d --force-recreate
 
             echo "⏳ Waiting for startup..."
             sleep 5

@@ -17,7 +17,7 @@ from .runner import async_run_for_user, async_run_cycle
 um = UserManager()
 
 WELCOME_TEXT = (
-    """🏠 Пошук квартири в Німеччині без стресу
+    f"""🏠 Пошук квартири в Німеччині без стресу
 
 Втомився щодня оновлювати Kleinanzeigen та Immowelt і не отримувати відповідей?
 Наш бот зробить це за тебе!
@@ -27,8 +27,8 @@ WELCOME_TEXT = (
 ✅ Пиши власникам серед перших — і збільшуй свої шанси отримати квартиру!
 
 🎁 Спробуй безкоштовно 4 дні, потім — лише 20€/місяць.
-🚀 Натисни «РОЗПОЧАТИ» і знайди квартиру швидше за інших!
-Натисни "РОЗПОЧАТИ" 👇"""
+🚀 Щоб активувати підписку, напиши адміністратору: {SUPPORT_CONTACT or '@admin'}
+"""
 )
 
 # Support one or multiple admin IDs (comma-separated)
@@ -62,12 +62,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_TEXT, reply_markup=_user_menu_keyboard())
 
 
-def _user_menu_keyboard():
-    return InlineKeyboardMarkup([
+def _user_menu_keyboard(uid: str | None = None):
+    """Build user menu. For new/inactive users, do NOT show subscribe button.
+    The subscribe button is intentionally hidden to avoid showing it to new users.
+    """
+    rows = [
         [InlineKeyboardButton("🛠️ Техпідтримка", callback_data="user_support")],
         [InlineKeyboardButton("📅 Дата початку підписки", callback_data="user_sub_info")],
-        [InlineKeyboardButton("🔔 Розпочати", callback_data="user_subscribe")],
-    ])
+    ]
+    # If in future we decide to show additional actions for active users, we can append here
+    return InlineKeyboardMarkup(rows)
 
 
 def _back_to_menu_keyboard():

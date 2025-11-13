@@ -58,20 +58,53 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_admin_menu_keyboard()
         )
         return
-    # Regular user path: show user menu (support, subscription date, start), register/update user as pending
+    # Regular user path: register/update user and show appropriate menu based on status
     um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
-    await update.message.reply_text(WELCOME_TEXT, reply_markup=_user_menu_keyboard())
+    await update.message.reply_text(WELCOME_TEXT, reply_markup=_user_menu_keyboard(uid))
 
 
 def _user_menu_keyboard(uid: str | None = None):
-    """Build user menu. For new/inactive users, do NOT show subscribe button.
-    The subscribe button is intentionally hidden to avoid showing it to new users.
+    """Build user menu.
+
+    - For нового юзера (без активної підписки / триалу) показуємо тільки:
+      * "Спробувати 14 днів БЕЗКОШТОВНО"
+      * "Техпідтримка"
+    - Для користувача з активним триалом або підпискою додаємо кнопку
+      "Дата початку підписки".
     """
+    # Base buttons (visible всім)
     rows = [
-        [InlineKeyboardButton("🛠️ Техпідтримка", callback_data="user_support")],
-        [InlineKeyboardButton("📅 Дата початку підписки", callback_data="user_sub_info")],
+        [InlineKeyboardButton("🎁 Спробувати 14 днів БЕЗКОШТОВНО", callback_data="user_subscribe")],
+        [InlineKeyboardButton("�️ Техпідтримка", callback_data="user_support")],
     ]
-    # If in future we decide to show additional actions for active users, we can append here
+
+    if uid is not None:
+        u = um.db.users.find_one({"user_id": uid}) or {}
+        # Determine if user already має активний доступ (trial або підписка)
+        from datetime import datetime as _dt
+        now_iso = _dt.utcnow().isoformat()
+        has_active_sub = False
+
+        # Check paid subscription
+        sub_expires = u.get("subscription_expires")
+        if sub_expires:
+            try:
+                has_active_sub = _dt.fromisoformat(sub_expires) >= _dt.fromisoformat(now_iso)
+            except Exception:
+                has_active_sub = False
+
+        # Check trial in filters
+        f = um.db.user_filters.find_one({"user_id": uid}) or {}
+        trial_expires = f.get("trial_expires_at")
+        if trial_expires and not has_active_sub:
+            try:
+                has_active_sub = _dt.fromisoformat(trial_expires) >= _dt.fromisoformat(now_iso)
+            except Exception:
+                pass
+
+        if has_active_sub:
+            rows.append([InlineKeyboardButton("📅 Дата початку підписки", callback_data="user_sub_info")])
+
     return InlineKeyboardMarkup(rows)
 
 
@@ -1188,16 +1221,7 @@ async def user_back_menu_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     try:
         uid = str(q.from_user.id)
-        u = um.db.users.find_one({"user_id": uid})
-        status = (u or {}).get("status")
-        subscription_expires = (u or {}).get("subscription_expires")
-        now_iso = datetime.utcnow().isoformat()
-        active_valid = status == "active" and subscription_expires and subscription_expires >= now_iso
-        if active_valid:
-            # For active users we can show compact menu
-            await context.bot.send_message(chat_id=q.message.chat_id, text="Головне меню:", reply_markup=_user_menu_keyboard())
-        else:
-            # Re-send full welcome while not active
-            await context.bot.send_message(chat_id=q.message.chat_id, text=WELCOME_TEXT, reply_markup=_user_menu_keyboard())
+        # Always будуємо меню на основі поточного стану користувача
+        await context.bot.send_message(chat_id=q.message.chat_id, text=WELCOME_TEXT, reply_markup=_user_menu_keyboard(uid))
     except Exception:
         pass

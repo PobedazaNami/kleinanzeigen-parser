@@ -1189,27 +1189,59 @@ async def user_sub_info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(q.from_user.id)
     u = um.db.users.find_one({"user_id": uid})
     status = (u or {}).get("status")
-    date_activated = (u or {}).get("date_activated")
     subscription_expires = (u or {}).get("subscription_expires")
     requested = (u or {}).get("requested_subscription")
-    now_iso = datetime.utcnow().isoformat()
-    active_valid = (
-        status == "active" and subscription_expires and subscription_expires >= now_iso
-    )
-    # Format date as DD.MM.YYYY for clarity
+
+    # Беремо інформацію і про триал, і про платну підписку
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+
     def _fmt_date(iso: str) -> str:
         try:
-            from datetime import datetime as _dt
             dt = _dt.fromisoformat(iso)
             return dt.strftime("%d.%m.%Y")
         except Exception:
             return iso
-    if active_valid and subscription_expires:
-        msg = f"📅 Підписка активна до: {_fmt_date(subscription_expires)}"
+
+    # Спробуємо знайти активний триал у фільтрах
+    f = um.db.user_filters.find_one({"user_id": uid}) or {}
+    trial_expires = f.get("trial_expires_at")
+    trial_active = False
+    if trial_expires:
+        try:
+            trial_active = now <= _dt.fromisoformat(trial_expires)
+        except Exception:
+            trial_active = False
+
+    paid_active = False
+    if subscription_expires:
+        try:
+            paid_active = now <= _dt.fromisoformat(subscription_expires)
+        except Exception:
+            paid_active = False
+
+    if paid_active:
+        msg = (
+            f"📅 Ваша підписка активна до: {_fmt_date(subscription_expires)}\n\n"
+            "Протягом цього часу бот перевіряє Kleinanzeigen та Immowelt кожні 30 хвилин "
+            "і надсилає вам нові оголошення одним із перших."
+        )
+    elif trial_active:
+        msg = (
+            f"🎁 Зараз у вас активний тестовий період до: {_fmt_date(trial_expires)}\n\n"
+            "Після 14 днів ви зможете продовжити доступ лише за 9€/місяць "
+            "і далі отримувати найсвіжіші оголошення одним із перших."
+        )
     elif requested:
-        msg = "⏳ Заявка на підписку очікує підтвердження адміністратора."
+        msg = (
+            "⏳ Заявка на підписку вже відправлена адміністратору.\n\n"
+            "Після схвалення ви отримаєте 14 днів безкоштовного тесту, а потім — 9€/місяць."
+        )
     else:
-        msg = "❌ Ви ще не активовані."
+        msg = (
+            "❌ Зараз підписка не активна.\n\n"
+            "Натисніть «Спробувати 14 днів БЕЗКОШТОВНО», щоб протестувати бота перед оплатою."
+        )
     try:
         await context.bot.send_message(chat_id=q.message.chat_id, text=msg, reply_markup=_back_to_menu_keyboard())
     except Exception:

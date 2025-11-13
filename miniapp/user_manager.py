@@ -107,15 +107,15 @@ class UserManager:
         limit = user.get("max_notifications_per_day", USER_DAILY_LIMIT) if user else USER_DAILY_LIMIT
         return count < limit
 
-    # Filters
-    def set_user_links(self, user_id: str, search_urls: List[str], preferred_locations: Optional[List[str]] = None, access_mode: Optional[str] = None):
-        """Assign links and optional access mode.
-        access_mode:
-          - "trial": start a 4-day trial window (only once, do not extend on reassign)
-          - "subscription": keep trial fields cleared and rely on users.subscription_expires
-          - None: just update links without changing access mode
-        Note: Does not extend subscription on reassign to comply with business rule.
-        """
+        # Filters
+        def set_user_links(self, user_id: str, search_urls: List[str], preferred_locations: Optional[List[str]] = None, access_mode: Optional[str] = None):
+                """Assign links and optional access mode.
+                access_mode:
+                    - "trial": start a 14-day trial window (only once, do not extend on reassign)
+                    - "subscription": keep trial fields cleared and rely on users.subscription_expires
+                    - None: just update links without changing access mode
+                Note: Does not extend subscription on reassign to comply with business rule.
+                """
         preferred_locations = preferred_locations or []
         now = datetime.utcnow()
         now_iso = now.isoformat()
@@ -144,7 +144,8 @@ class UserManager:
             if not f.get("trial_started_at"):
                 set_fields["trial_started_at"] = now_iso
                 from datetime import timedelta as _td
-                set_fields["trial_expires_at"] = (now + _td(days=4)).isoformat()
+                # 14-day trial window
+                set_fields["trial_expires_at"] = (now + _td(days=14)).isoformat()
         elif access_mode == "subscription":
             # Clear trial markers when moving to subscription mode, but DO NOT modify
             # users.subscription_expires or date_activated here. Subscription start

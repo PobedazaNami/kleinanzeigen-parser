@@ -56,6 +56,7 @@ SCHED_START_HOUR = int(os.getenv("SCHED_START_HOUR", "6"))
 SCHED_END_HOUR = int(os.getenv("SCHED_END_HOUR", "23"))
 
 SUBSCRIPTION_DURATION = timedelta(days=30)
+TRIAL_DURATION = timedelta(days=14)
 
 USER_DAILY_LIMIT = int(os.getenv("USER_DAILY_LIMIT", "50"))
 

@@ -1139,15 +1139,27 @@ async def admin_inline_approve_cb(update: Update, context: ContextTypes.DEFAULT_
     if not user_doc:
         # Create a minimal pending doc then approve
         um.upsert_user(uid, "", "", "")
-    um.approve_user(uid)
-    # Mark awaiting payment and clear request flag
-    um.db.users.update_one({"user_id": uid}, {"$set": {"awaiting_payment": True}, "$unset": {"requested_subscription": ""}})
-    await query.edit_message_text(f"Користувача {uid} схвалено. Очікує оплату.")
-    # Notify user about approval and payment step
+    
+    # Activate 14-day free trial immediately
+    um.mark_trial(uid)
+    
+    # Get subscription expiration date for notification
+    user_doc = um.db.users.find_one({"user_id": uid}) or {}
+    sub_until = user_doc.get("subscription_expires", "—")
+    from datetime import datetime as _dt
+    try:
+        sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+    except Exception:
+        sub_until_formatted = sub_until
+    
+    await query.edit_message_text(f"✅ Користувача {uid} схвалено. 14-денний триал активовано до: {sub_until_formatted}")
+    
+    # Notify user about trial activation
     try:
         await context.bot.send_message(chat_id=uid, text=(
-            "✅ Заявку схвалено. Доступ активується після оплати.\n"
-            "Після підтвердження оплати адміністратором підписка стартує на 30 днів."
+            f"🎉 Вітаємо! Тестовий період на 14 днів активовано!\n\n"
+            f"📅 Підписка активна до: {sub_until_formatted}\n\n"
+            "Тепер додай свої посилання пошуку, і бот почне шукати для тебе квартири!"
         ))
     except Exception:
         pass

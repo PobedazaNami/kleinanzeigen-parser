@@ -2,7 +2,7 @@ from datetime import datetime
 import pytz
 from typing import List, Dict, Any, Optional
 from .db import get_db
-from .config import SUBSCRIPTION_DURATION, USER_DAILY_LIMIT, NOTIFY_INTERVAL_MINUTES
+from .config import SUBSCRIPTION_DURATION, TRIAL_DURATION, USER_DAILY_LIMIT, NOTIFY_INTERVAL_MINUTES
 from datetime import timedelta
 
 class UserManager:
@@ -43,6 +43,23 @@ class UserManager:
                 "date_added": now_iso,
                 "role": "user",
                 "max_notifications_per_day": USER_DAILY_LIMIT,
+            }}
+        )
+
+    def mark_trial(self, user_id: str):
+        """Start a free trial period for the user for TRIAL_DURATION (14 days).
+        Sets date_activated to now and subscription_expires to now + 14 days.
+        """
+        now = datetime.utcnow()
+        self.db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "status": "active",
+                "date_activated": now.isoformat(),
+                "subscription_expires": (now + TRIAL_DURATION).isoformat(),
+                "awaiting_payment": False,
+            }, "$unset": {
+                "requested_subscription": ""
             }}
         )
 

@@ -8,6 +8,7 @@ from telegram import (
     BotCommand,
     BotCommandScopeDefault,
     BotCommandScopeChat,
+    LinkPreviewOptions,
 )
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler, CallbackQueryHandler
 from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID, SUPPORT_CONTACT
@@ -1091,6 +1092,7 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
         # Mark that user requested subscription (pending approval)
         um.db.users.update_one({"user_id": uid}, {"$set": {"requested_subscription": True}})
+        video_instruction_url = "https://youtube.com/shorts/-g282XmZa3c"
         await context.bot.send_message(
             chat_id=uid,
             text=(
@@ -1101,10 +1103,11 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "2️⃣ Надішли адміну до 4 таких посилань — бот буде сканувати саме їх.\n"
                 "3️⃣ Отримай безкоштовний тест на 14 днів, а після цього — доступ лише за 9€/місяць, "
                 "щоб отримувати найсвіжіші оголошення одним із перших!\n\n"
-                "📹 Інструкція на відео: https://youtube.com/shorts/-g282XmZa3c\n"
+                f"📹 Інструкція на відео: {video_instruction_url}\n"
                 "📩 Адмін — @reeziat"
             ),
             reply_markup=_back_to_menu_keyboard(),
+            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_media=True, prefer_large_media=True),
         )
     except Exception:
         pass

@@ -16,7 +16,7 @@ services:
     mem_limit: 256m
     cpu_count: 1
     healthcheck:
-      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/listings.db').execute('SELECT 1')"]
+      test: [ "CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/listings.db').execute('SELECT 1')" ]
       interval: 5m
       timeout: 30s
       retries: 3
@@ -26,7 +26,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-  
+
   telegram-bot:
     build: .
     container_name: telegram_bot
@@ -43,7 +43,7 @@ services:
     mem_limit: 128m
     cpu_count: 1
     healthcheck:
-      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/bot_users.db').execute('SELECT 1')"]
+      test: [ "CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/bot_users.db').execute('SELECT 1')" ]
       interval: 5m
       timeout: 30s
       retries: 3
@@ -71,7 +71,7 @@ services:
     mem_limit: 512m
     cpu_count: 1
     healthcheck:
-      test: ["CMD", "python", "-c", "import importlib,sys;importlib.import_module('miniapp.main');sys.exit(0)"]
+      test: [ "CMD", "python", "-c", "import importlib,sys;importlib.import_module('miniapp.main');sys.exit(0)" ]
       interval: 5m
       timeout: 30s
       retries: 3

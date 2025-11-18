@@ -11,6 +11,7 @@ class UserManager:
 
     # Users
     def upsert_user(self, user_id: str, username: str = "", first_name: str = "", last_name: str = ""):
+        now_iso = datetime.utcnow().isoformat()
         self.db.users.update_one(
             {"user_id": user_id},
             {"$setOnInsert": {
@@ -21,8 +22,9 @@ class UserManager:
                 "status": "pending",
                 "subscription_expires": None,
                 "max_notifications_per_day": USER_DAILY_LIMIT,
-                "date_added": datetime.utcnow().isoformat(),
+                "date_added": now_iso,
                 "date_activated": None,
+                "bot_started_at": now_iso,
                 "notes": ""
             }},
             upsert=True
@@ -110,6 +112,22 @@ class UserManager:
         return list(self.db.users.find(
             {"status": {"$ne": "banned"}},
             {"user_id": 1, "username": 1, "first_name": 1, "status": 1}
+        ))
+
+    def get_users_started_but_not_activated(self) -> List[Dict[str, Any]]:
+        """Return users who started the bot but didn't activate 14-day subscription.
+        These are users with bot_started_at set but status is 'pending' and no subscription_expires.
+        """
+        return list(self.db.users.find(
+            {
+                "bot_started_at": {"$exists": True},
+                "status": "pending",
+                "$or": [
+                    {"subscription_expires": None},
+                    {"subscription_expires": {"$lt": datetime.utcnow().isoformat()}}
+                ]
+            },
+            {"user_id": 1, "username": 1, "first_name": 1, "bot_started_at": 1}
         ))
 
     def can_send_notification(self, user_id: str) -> bool:

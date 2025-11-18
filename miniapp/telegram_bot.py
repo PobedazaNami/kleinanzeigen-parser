@@ -632,6 +632,7 @@ PAGE_SIZE = 10
 def _admin_menu_keyboard():
     kb = [
         [InlineKeyboardButton("👥 Користувачі та посилання", callback_data="admin_users")],
+        [InlineKeyboardButton("🔔 Користувачі без активації", callback_data="admin_not_activated")],
         [InlineKeyboardButton("➕ Додати посилання користувачу", callback_data="admin_add_links")],
         [InlineKeyboardButton("💳 Підтвердити оплату", callback_data="admin_paid")],
         [InlineKeyboardButton("❎ Скасувати підписку", callback_data="admin_cancel_sub")],
@@ -662,6 +663,52 @@ async def admin_menu_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_users":
         # Show paginated users overview (page 0)
         await _show_users_overview_page(query, page=0)
+        return ADMIN_MENU
+    elif data == "admin_not_activated":
+        # Show users who started bot but didn't activate subscription
+        users = um.get_users_started_but_not_activated()
+        if not users:
+            await query.edit_message_text(
+                "✅ Немає користувачів, які стартували бота, але не активували підписку.\n\n"
+                "Всі користувачі або активували підписку, або ще не стартували бота.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="admin_menu_back")]])
+            )
+            return ADMIN_MENU
+        
+        # Format user list
+        text_lines = [
+            "🔔 Користувачі, які стартували бота, але не активували підписку:\n",
+            f"Всього: {len(users)}\n"
+        ]
+        
+        from datetime import datetime as _dt
+        for u in users[:20]:  # Show first 20
+            uid = u.get("user_id")
+            username = u.get("username", "")
+            first_name = u.get("first_name", "")
+            bot_started_at = u.get("bot_started_at", "")
+            
+            label = f"@{username}" if username else first_name or uid
+            try:
+                started_date = _dt.fromisoformat(bot_started_at).strftime("%d.%m.%Y")
+            except Exception:
+                started_date = "—"
+            
+            text_lines.append(f"• {label} (ID: {uid}) - старт: {started_date}")
+        
+        if len(users) > 20:
+            text_lines.append(f"\n... та ще {len(users) - 20} користувачів")
+        
+        text_lines.append(
+            "\n💡 Використайте /broadcast для надсилання повідомлення всім користувачам "
+            "або додайте посилання окремим користувачам."
+        )
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📣 Розсилка цим користувачам", callback_data="admin_broadcast_not_activated")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="admin_menu_back")]
+        ])
+        await query.edit_message_text("\n".join(text_lines), reply_markup=kb)
         return ADMIN_MENU
     if data == "admin_add_links":
         # Show paginated list of users for selection (page 0)
@@ -1028,11 +1075,23 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not message_text:
         await update.message.reply_text("Текст порожній. Спробуйте ще раз або натисніть Скасувати.")
         return BROADCAST_ENTER
-    users = um.get_all_users_for_broadcast()
+    
+    # Check if we're broadcasting to a specific target group
+    broadcast_target = context.user_data.get("broadcast_target", "all")
+    
+    if broadcast_target == "not_activated":
+        users = um.get_users_started_but_not_activated()
+        target_description = "користувачам без активації"
+    else:
+        users = um.get_all_users_for_broadcast()
+        target_description = "всім користувачам"
+    
     if not users:
-        await update.message.reply_text("Немає користувачів для розсилки.")
+        await update.message.reply_text(f"Немає користувачів для розсилки ({target_description}).")
+        context.user_data.pop("broadcast_target", None)
         return ConversationHandler.END
-    await update.message.reply_text(f"Починаю розсилку для {len(users)} користувачів...")
+    
+    await update.message.reply_text(f"Починаю розсилку {target_description}: {len(users)} користувачів...")
     success_count = 0
     fail_count = 0
     for user in users:
@@ -1045,10 +1104,50 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             fail_count += 1
             print(f"Failed to send to {user_id}: {e}")
+    
     await update.message.reply_text(
-        f"✅ Розсилка завершена!\nУспішно: {success_count}\nПомилок: {fail_count}"
+        f"✅ Розсилка завершена!\n"
+        f"Цільова група: {target_description}\n"
+        f"Успішно: {success_count}\n"
+        f"Помилок: {fail_count}"
     )
+    
+    # Clear broadcast target
+    context.user_data.pop("broadcast_target", None)
     return ConversationHandler.END
+
+
+async def admin_menu_back_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler to go back to admin menu."""
+    query = update.callback_query
+    await query.answer()
+    uid = str(update.effective_user.id)
+    if not is_admin(uid):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    await query.edit_message_text("Адмін-меню:", reply_markup=_admin_menu_keyboard())
+    return ADMIN_MENU
+
+
+async def admin_broadcast_not_activated_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler to broadcast message to users who started but didn't activate."""
+    query = update.callback_query
+    await query.answer()
+    uid = str(update.effective_user.id)
+    if not is_admin(uid):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    
+    # Mark that we want to broadcast to non-activated users
+    context.user_data["broadcast_target"] = "not_activated"
+    
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")]])
+    await query.edit_message_text(
+        "📣 Розсилка користувачам без активації\n\n"
+        "Надішліть текст повідомлення для розсилки користувачам, які стартували бота, але не активували підписку.",
+        reply_markup=kb,
+    )
+    return BROADCAST_ENTER
 
 
 async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1058,6 +1157,8 @@ async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Скасовано.")
     else:
         await update.message.reply_text("Скасовано.")
+    # Clear any broadcast target
+    context.user_data.pop("broadcast_target", None)
     return ConversationHandler.END
 
 
@@ -1066,14 +1167,16 @@ def _admin_menu_conv() -> ConversationHandler:
         entry_points=[
             CommandHandler("admin", admin_menu),
             # Allow starting the admin conversation from inline buttons shown on /start
-            CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|cancel_sub|users)$"),
+            CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|cancel_sub|users|not_activated)$"),
         ],
         states={
             ADMIN_MENU: [
-                CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|users)$"),
+                CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|users|not_activated)$"),
                 CallbackQueryHandler(admin_users_page_cb, pattern=r"^admin_users_page:\d+$"),
                 CallbackQueryHandler(user_info_cb, pattern=r"^user_info:.*$"),
                 CallbackQueryHandler(noop_cb, pattern=r"^noop:.*$"),
+                CallbackQueryHandler(admin_menu_back_cb, pattern=r"^admin_menu_back$"),
+                CallbackQueryHandler(admin_broadcast_not_activated_cb, pattern=r"^admin_broadcast_not_activated$"),
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$"),
             ],
             CHOOSE_USER: [
@@ -1109,13 +1212,15 @@ def register_global_admin_handlers(app: Application):
     # These are callback-only handlers. They don't consume text messages, so they won't
     # interfere with ConversationHandler text states. They make admin menu buttons work
     # even when shown outside the /admin conversation (e.g., from /start).
-    app.add_handler(CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|cancel_sub|users)$"))
+    app.add_handler(CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|cancel_sub|users|not_activated)$"))
     app.add_handler(CallbackQueryHandler(pick_user_cb, pattern=r"^pick_user:.*$"))
     app.add_handler(CallbackQueryHandler(admin_list_users_cb, pattern=r"^admin_list_users:\d+$"))
     app.add_handler(CallbackQueryHandler(admin_search_user_cb, pattern=r"^admin_search_user$"))
     app.add_handler(CallbackQueryHandler(admin_users_page_cb, pattern=r"^admin_users_page:\d+$"))
     app.add_handler(CallbackQueryHandler(user_info_cb, pattern=r"^user_info:.*$"))
     app.add_handler(CallbackQueryHandler(noop_cb, pattern=r"^noop:.*$"))
+    app.add_handler(CallbackQueryHandler(admin_menu_back_cb, pattern=r"^admin_menu_back$"))
+    app.add_handler(CallbackQueryHandler(admin_broadcast_not_activated_cb, pattern=r"^admin_broadcast_not_activated$"))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$"))
     app.add_handler(CallbackQueryHandler(choose_mode_cb, pattern=r"^mode_(trial|subscription)$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_cb, pattern=r"^del_user:.*$"))

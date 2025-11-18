@@ -189,6 +189,58 @@ class BaseParser:
             self.logger.error(f"Ошибка при синхронной отправке в Telegram: {e}")
             return False
     
+    def send_telegram_photo(self, photo_url: str, caption: str, parse_mode: str = 'Markdown'):
+        """Отправка фото в Telegram через HTTP API"""
+        if not self.config.get('telegram', {}).get('bot_token') or not self.config.get('telegram', {}).get('chat_id'):
+            return False
+            
+        try:
+            bot_token = self.config['telegram']['bot_token']
+            chat_id = self.config['telegram']['chat_id']
+            
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            
+            data = {
+                'chat_id': chat_id,
+                'photo': photo_url,
+                'caption': caption[:1024] if caption else "",  # Telegram caption limit
+                'parse_mode': parse_mode
+            }
+            
+            response = sync_requests.post(url, data=data, timeout=30)
+            response.raise_for_status()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Ошибка при отправке фото в Telegram: {e}")
+            return False
+    
+    def send_telegram_video(self, video_url: str, caption: str, parse_mode: str = 'Markdown'):
+        """Отправка видео в Telegram через HTTP API"""
+        if not self.config.get('telegram', {}).get('bot_token') or not self.config.get('telegram', {}).get('chat_id'):
+            return False
+            
+        try:
+            bot_token = self.config['telegram']['bot_token']
+            chat_id = self.config['telegram']['chat_id']
+            
+            url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+            
+            data = {
+                'chat_id': chat_id,
+                'video': video_url,
+                'caption': caption[:1024] if caption else "",  # Telegram caption limit
+                'parse_mode': parse_mode
+            }
+            
+            response = sync_requests.post(url, data=data, timeout=30)
+            response.raise_for_status()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Ошибка при отправке видео в Telegram: {e}")
+            return False
+    
     def get_page(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
         """Получение и парсинг HTML страницы"""
         for attempt in range(retries):
@@ -324,12 +376,13 @@ class BaseParser:
             return False
     
     def send_telegram_notification(self, listing: Dict):
-        """Отправка уведомления в Telegram"""
+        """Отправка уведомления в Telegram с медиа (фото/видео)"""
         if not self.config.get('telegram', {}).get('chat_id'):
             self.logger.warning("Telegram не настроен")
             return
         
         try:
+            # Создаем текст уведомления
             message = f"🏠 *Новая квартира найдена!*\n\n"
             message += f"📝 *{listing['title']}*\n"
             message += f"💰 Цена: *{listing['price']}€*\n" if listing['price'] else ""
@@ -339,20 +392,56 @@ class BaseParser:
             message += f"\n🔗 [Посмотреть объявление]({listing['url']})"
             
             if listing.get('description'):
-                message += f"\n\n📄 Описание:\n{listing['description'][:200]}..."
+                # Ограничиваем длину описания для caption
+                max_desc_len = 150 if (listing.get('images') or listing.get('videos')) else 200
+                message += f"\n\n📄 Описание:\n{listing['description'][:max_desc_len]}..."
             
-            self.send_telegram_sync(message, parse_mode='Markdown', disable_web_page_preview=False)
+            # Пытаемся отправить с видео, если есть
+            success = False
+            if listing.get('videos') and len(listing['videos']) > 0:
+                video_url = listing['videos'][0]  # Берем первое видео
+                self.logger.info(f"Отправка с видео: {video_url}")
+                success = self.send_telegram_video(video_url, message)
+                
+                if success:
+                    self.logger.info(f"✅ Отправлено уведомление с видео для: {listing['title']}")
+                else:
+                    self.logger.warning(f"⚠️ Не удалось отправить видео, пробуем фото...")
             
-            self.cursor.execute(
-                'UPDATE listings SET notified = TRUE WHERE id = ?',
-                (listing['id'],)
-            )
-            self.conn.commit()
+            # Если видео нет или не удалось отправить, пытаемся отправить с фото
+            if not success and listing.get('images') and len(listing['images']) > 0:
+                image_url = listing['images'][0]  # Берем первое изображение
+                self.logger.info(f"Отправка с фото: {image_url}")
+                success = self.send_telegram_photo(image_url, message)
+                
+                if success:
+                    self.logger.info(f"✅ Отправлено уведомление с фото для: {listing['title']}")
+                else:
+                    self.logger.warning(f"⚠️ Не удалось отправить фото, отправляем текст...")
             
-            self.logger.info(f"Уведомление отправлено для: {listing['title']}")
+            # Если медиа нет или не удалось отправить, отправляем текстом
+            if not success:
+                self.logger.info("Отправка текстового уведомления")
+                success = self.send_telegram_sync(message, parse_mode='Markdown', disable_web_page_preview=False)
+                
+                if success:
+                    self.logger.info(f"✅ Отправлено текстовое уведомление для: {listing['title']}")
+            
+            # Помечаем как отправленное, если хотя бы одна попытка удалась
+            if success:
+                self.cursor.execute(
+                    'UPDATE listings SET notified = TRUE WHERE id = ?',
+                    (listing['id'],)
+                )
+                self.conn.commit()
+                self.logger.info(f"Уведомление успешно отправлено для: {listing['title']}")
+            else:
+                self.logger.error(f"❌ Не удалось отправить уведомление ни одним способом")
             
         except Exception as e:
             self.logger.error(f"Ошибка при отправке уведомления: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             self.send_error_notification(f"Ошибка при отправке уведомления: {e}")
     
     def send_error_notification(self, error_message: str, error_type: str = "ОШИБКА"):

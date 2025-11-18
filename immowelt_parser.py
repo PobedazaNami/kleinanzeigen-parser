@@ -262,6 +262,54 @@ class ImmoweltParser(BaseParser):
             self.logger.warning(f"Ошибка при извлечении даты из Immowelt: {e}")
             return None
     
+    def extract_media_urls(self, soup: BeautifulSoup) -> Dict[str, List[str]]:
+        """Извлечение URL изображений и видео из объявления Immowelt"""
+        media_urls = {
+            'images': [],
+            'videos': []
+        }
+        
+        try:
+            # Поиск изображений в галерее Immowelt
+            image_selectors = [
+                'img[data-test="gallery-image"]',  # Основные изображения галереи
+                'div[data-test="gallery"] img',  # Изображения внутри галереи
+                'img[src*="immowelt"]',  # Все изображения Immowelt
+                'picture img',  # Изображения в элементе picture
+                '.gallery img',  # Альтернативная галерея
+            ]
+            
+            for selector in image_selectors:
+                images = soup.select(selector)
+                for img in images:
+                    src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                    if src and 'http' in src and 'logo' not in src.lower():
+                        # Получаем полноразмерное изображение
+                        # Immowelt может иметь размеры в URL, заменяем на большой размер
+                        full_size_url = re.sub(r'/\d+x\d+/', '/1200x800/', src)
+                        if full_size_url not in media_urls['images']:
+                            media_urls['images'].append(full_size_url)
+            
+            # Поиск видео
+            video_elements = soup.find_all('video')
+            for video in video_elements:
+                src = video.get('src')
+                if src and 'http' in src:
+                    media_urls['videos'].append(src)
+                
+                sources = video.find_all('source')
+                for source in sources:
+                    src = source.get('src')
+                    if src and 'http' in src and src not in media_urls['videos']:
+                        media_urls['videos'].append(src)
+            
+            self.logger.debug(f"Immowelt - найдено изображений: {len(media_urls['images'])}, видео: {len(media_urls['videos'])}")
+            
+        except Exception as e:
+            self.logger.warning(f"Ошибка при извлечении медиа из Immowelt: {e}")
+        
+        return media_urls
+
     def extract_listing_data(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
         """Извлечение данных из отдельного объявления Immowelt"""
         try:
@@ -394,6 +442,9 @@ class ImmoweltParser(BaseParser):
                     description = description_elem.get_text(strip=True)
                     break
             
+            # Извлечение медиа (изображения и видео)
+            media_urls = self.extract_media_urls(soup)
+            
             # Для Immowelt дата не нужна - мы фильтруем по значку "Neu"
             # Все найденные объявления уже новые, поэтому используем сегодняшнюю дату
             listing_date = datetime.now()
@@ -421,7 +472,9 @@ class ImmoweltParser(BaseParser):
                 'url': url,
                 'date_posted': listing_date.isoformat() if listing_date else None,
                 'date_found': datetime.now().isoformat(),
-                'hash': listing_hash
+                'hash': listing_hash,
+                'images': media_urls['images'],
+                'videos': media_urls['videos']
             }
             
             self.logger.info(f"✅ Извлечены данные Immowelt (NEW): {title} - {price}€ - {location}")

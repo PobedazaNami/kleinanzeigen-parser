@@ -180,6 +180,54 @@ class ImmobilienScout24Parser(BaseParser):
         self.logger.info(f"Найдено {len(links)} НОВЫХ объявлений с меткой 'Neu' на ImmobilienScout24")
         return links
     
+    def extract_media_urls(self, soup: BeautifulSoup) -> Dict[str, List[str]]:
+        """Извлечение URL изображений и видео из объявления ImmobilienScout24"""
+        media_urls = {
+            'images': [],
+            'videos': []
+        }
+        
+        try:
+            # Поиск изображений в галерее ImmobilienScout24
+            image_selectors = [
+                'img[data-testid="gallery-image"]',  # Основные изображения галереи
+                'div[class*="gallery"] img',  # Изображения внутри галереи
+                'img[src*="immobilienscout24"]',  # Все изображения Scout24
+                'picture img',  # Изображения в элементе picture
+                'img[class*="expose"]',  # Изображения экспозе
+            ]
+            
+            for selector in image_selectors:
+                images = soup.select(selector)
+                for img in images:
+                    src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                    if src and 'http' in src and 'logo' not in src.lower():
+                        # Получаем полноразмерное изображение
+                        # Scout24 может иметь размеры в URL, заменяем на большой размер
+                        full_size_url = re.sub(r'/\d+x\d+/', '/1200x800/', src)
+                        if full_size_url not in media_urls['images']:
+                            media_urls['images'].append(full_size_url)
+            
+            # Поиск видео
+            video_elements = soup.find_all('video')
+            for video in video_elements:
+                src = video.get('src')
+                if src and 'http' in src:
+                    media_urls['videos'].append(src)
+                
+                sources = video.find_all('source')
+                for source in sources:
+                    src = source.get('src')
+                    if src and 'http' in src and src not in media_urls['videos']:
+                        media_urls['videos'].append(src)
+            
+            self.logger.debug(f"ImmobilienScout24 - найдено изображений: {len(media_urls['images'])}, видео: {len(media_urls['videos'])}")
+            
+        except Exception as e:
+            self.logger.warning(f"Ошибка при извлечении медиа из ImmobilienScout24: {e}")
+        
+        return media_urls
+
     def extract_listing_data(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
         """Извлечение данных из отдельного объявления ImmobilienScout24"""
         try:
@@ -310,6 +358,9 @@ class ImmobilienScout24Parser(BaseParser):
                     description = description_elem.get_text(strip=True)
                     break
             
+            # Извлечение медиа (изображения и видео)
+            media_urls = self.extract_media_urls(soup)
+            
             # Для ImmobilienScout24 дата не нужна - мы фильтруем по значку "Neu"
             listing_date = datetime.now()
             self.logger.debug("Для ImmobilienScout24 используем текущую дату (фильтр по значку Neu)")
@@ -337,7 +388,9 @@ class ImmobilienScout24Parser(BaseParser):
                 'date_posted': listing_date.isoformat() if listing_date else None,
                 'date_found': datetime.now().isoformat(),
                 'hash': listing_hash,
-                'parser_source': 'immobilienscout24'
+                'parser_source': 'immobilienscout24',
+                'images': media_urls['images'],
+                'videos': media_urls['videos']
             }
             
             self.logger.info(f"✅ Извлечены данные ImmobilienScout24 (NEW): {title} - {price}€ - {location}")

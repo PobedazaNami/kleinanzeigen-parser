@@ -190,6 +190,56 @@ class KleinanzeigenParser(BaseParser):
             self.logger.warning(f"Ошибка при извлечении даты: {e}")
             return None
 
+    def extract_media_urls(self, soup: BeautifulSoup) -> Dict[str, List[str]]:
+        """Извлечение URL изображений и видео из объявления"""
+        media_urls = {
+            'images': [],
+            'videos': []
+        }
+        
+        try:
+            # Поиск изображений в галерее
+            # Kleinanzeigen использует различные селекторы для изображений
+            image_selectors = [
+                'img[src*="img.kleinanzeigen.de"]',  # Основные изображения
+                '.galleryimage img',  # Галерея изображений
+                '#viewad-product img',  # Изображения в секции продукта
+                '.imagegallery img',  # Альтернативная галерея
+                'img.image',  # Общие изображения
+            ]
+            
+            for selector in image_selectors:
+                images = soup.select(selector)
+                for img in images:
+                    src = img.get('src') or img.get('data-src')
+                    if src and 'http' in src:
+                        # Получаем полноразмерное изображение (заменяем размер в URL)
+                        # Kleinanzeigen обычно имеет размеры в URL типа $_59.JPG
+                        full_size_url = re.sub(r'\$_\d+\.', '$.', src)
+                        if full_size_url not in media_urls['images']:
+                            media_urls['images'].append(full_size_url)
+            
+            # Поиск видео
+            video_elements = soup.find_all('video')
+            for video in video_elements:
+                src = video.get('src')
+                if src and 'http' in src:
+                    media_urls['videos'].append(src)
+                
+                # Также проверяем source внутри video
+                sources = video.find_all('source')
+                for source in sources:
+                    src = source.get('src')
+                    if src and 'http' in src and src not in media_urls['videos']:
+                        media_urls['videos'].append(src)
+            
+            self.logger.debug(f"Найдено изображений: {len(media_urls['images'])}, видео: {len(media_urls['videos'])}")
+            
+        except Exception as e:
+            self.logger.warning(f"Ошибка при извлечении медиа: {e}")
+        
+        return media_urls
+
     def extract_listing_data(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
         """Извлечение данных из отдельного объявления"""
         try:
@@ -324,6 +374,9 @@ class KleinanzeigenParser(BaseParser):
             
             description = description_elem.get_text(strip=True) if description_elem else ""
             
+            # Извлечение медиа (изображения и видео)
+            media_urls = self.extract_media_urls(soup)
+            
             # Извлечение даты публикации
             listing_date = self.extract_listing_date(soup)
             
@@ -352,7 +405,9 @@ class KleinanzeigenParser(BaseParser):
                 'url': url,
                 'date_posted': listing_date.isoformat() if listing_date else None,
                 'date_found': datetime.now().isoformat(),
-                'hash': listing_hash
+                'hash': listing_hash,
+                'images': media_urls['images'],
+                'videos': media_urls['videos']
             }
             
             date_str = listing_date.strftime('%d.%m.%Y') if listing_date else "сегодня"

@@ -182,13 +182,27 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     if is_admin(uid):
         await update.message.reply_text(
-            "/start\n/admin — відкрити адмін-меню\n/users — список користувачів та посилань\n/approve <user_id> — схвалити користувача\n"
-            "/assign_links <user_id_or_username> <посилання...> — швидке призначення посилань (trial або subscription)\n"
-            "/set_location <user_id> <посилання...> ; cities=Місто1,Місто2 — призначити міста/посилання\n"
-            "/view_location <user_id> — переглянути міста/посилання\n/delete_user <user_id> — видалити користувача\n"
-            "/set_links <url1 url2 ...> — задати посилання собі\n/test_run — тестовий запуск парсингу\n"
+            "🔧 Команди адміністратора:\n\n"
+            "📋 Основні команди:\n"
+            "/start — почати роботу з ботом\n"
+            "/admin — відкрити адмін-меню\n"
+            "/users — список користувачів та посилань\n"
+            "/help — показати цю довідку\n\n"
+            "➕ Додавання посилань (найпростіші способи):\n"
+            "/add_link <user_id або @username> <посилання...> — ШВИДКЕ додавання посилань\n"
+            "/assign_links <user_id або @username> <посилання...> — те саме що /add_link\n"
+            "/reply_assign — відповісти Reply на повідомлення з посиланнями для призначення\n\n"
+            "👥 Управління користувачами:\n"
+            "/approve <user_id> — схвалити користувача\n"
+            "/delete_user <user_id> — видалити користувача\n"
+            "/view_location <user_id> — переглянути міста/посилання користувача\n\n"
+            "⚙️ Налаштування:\n"
+            "/set_location <user_id> <посилання...> ; cities=Місто1,Місто2 — детальне налаштування\n"
+            "/set_links <url1 url2 ...> — задати посилання собі\n\n"
+            "🚀 Інше:\n"
+            "/test_run — тестовий запуск парсингу\n"
             "/broadcast <текст> — розсилка повідомлення всім користувачам\n\n"
-            "💡 Також можна відповісти Reply на повідомлення користувача з посиланнями командою /reply_assign\n"
+            "💡 Підказка: для швидкого додавання посилань просто використайте /add_link або /reply_assign!\n"
         )
     else:
         await update.message.reply_text(
@@ -496,7 +510,8 @@ async def _post_init(app: Application):
                     BotCommand("start", "Почати (адмін)"),
                     BotCommand("admin", "Відкрити адмін-меню"),
                     BotCommand("users", "Список користувачів та посилань"),
-                    BotCommand("assign_links", "Швидке призначення посилань користувачу"),
+                    BotCommand("add_link", "Швидко додати посилання користувачу"),
+                    BotCommand("assign_links", "Призначити посилання користувачу"),
                     BotCommand("reply_assign", "Призначити посилання відповіддю на повідомлення"),
                     BotCommand("approve", "Схвалити користувача"),
                     BotCommand("set_location", "Призначити міста/посилання"),
@@ -571,12 +586,13 @@ def build_app():
     app.add_handler(CommandHandler("support", support_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("users", users_cmd))
-    app.add_handler(CommandHandler("menu", admin_menu))
+    app.add_handler(CommandHandler("admin", admin_menu))
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("delete_user", delete_user))
     app.add_handler(CommandHandler("set_location", set_location))
     app.add_handler(CommandHandler("view_location", view_location))
     app.add_handler(CommandHandler("assign_links", assign_links))
+    app.add_handler(CommandHandler("add_link", assign_links))  # Alias for easier use
     app.add_handler(CommandHandler("reply_assign", reply_assign))
     app.add_handler(CommandHandler("set_links", set_links))
     app.add_handler(CommandHandler("test_run", test_run))

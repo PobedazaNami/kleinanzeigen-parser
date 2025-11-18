@@ -1085,13 +1085,25 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     u = query.from_user
     uid = str(u.id)
-    # Send separate confirmation (не змінюємо вітальне повідомлення)
+    # Auto-activate 14-day trial immediately
     try:
         # Ensure user document exists (edge case: if /start didn't create it)
         if not um.db.users.find_one({"user_id": uid}):
             um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
-        # Mark that user requested subscription (pending approval)
-        um.db.users.update_one({"user_id": uid}, {"$set": {"requested_subscription": True}})
+        
+        # Activate 14-day free trial immediately (no admin approval needed)
+        um.mark_trial(uid)
+        
+        # Get subscription expiration date for display
+        user_doc = um.db.users.find_one({"user_id": uid}) or {}
+        sub_until = user_doc.get("subscription_expires", "—")
+        from datetime import datetime as _dt
+        try:
+            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+        except Exception:
+            sub_until_formatted = sub_until
+        
+        # Send instruction message with video
         video_instruction_url = "https://youtube.com/shorts/-g282XmZa3c"
         await context.bot.send_message(
             chat_id=uid,
@@ -1104,30 +1116,30 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "3️⃣ Отримай безкоштовний тест на 14 днів, а після цього — доступ лише за 9€/місяць, "
                 "щоб отримувати найсвіжіші оголошення одним із перших!\n\n"
                 f"📹 Інструкція на відео: {video_instruction_url}\n"
-                "📩 Адмін — @reeziat"
+                f"📩 Адмін — @reeziat\n\n"
+                f"✅ Тестовий період активовано до: {sub_until_formatted}"
             ),
             reply_markup=_back_to_menu_keyboard(),
-            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_media=True, prefer_large_media=True),
+            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_small_media=False, prefer_large_media=True, show_above_text=False),
         )
-    except Exception:
-        pass
-    # notify admins
-    if not _admin_ids:
-        return
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Схвалити", callback_data=f"admin_inline_approve:{uid}")],
-        [InlineKeyboardButton("❌ Відхилити", callback_data=f"admin_inline_decline:{uid}")],
-    ])
-    text = (
-        f"Нова заявка на підписку\n"
-        f"ID: {uid}\nUsername: @{u.username if u.username else '—'}\n"
-        f"Ім'я: {u.first_name or ''} {u.last_name or ''}"
-    )
-    for aid in _admin_ids:
-        try:
-            await context.bot.send_message(chat_id=aid, text=text, reply_markup=kb)
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"Error activating trial for {uid}: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Notify admins (informational only, no approval needed)
+    if _admin_ids:
+        text = (
+            f"✅ Новий користувач активував 14-денний триал\n"
+            f"ID: {uid}\nUsername: @{u.username if u.username else '—'}\n"
+            f"Ім'я: {u.first_name or ''} {u.last_name or ''}\n"
+            f"Активний до: {sub_until_formatted}"
+        )
+        for aid in _admin_ids:
+            try:
+                await context.bot.send_message(chat_id=aid, text=text)
+            except Exception:
+                pass
 
 
 async def admin_inline_approve_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):

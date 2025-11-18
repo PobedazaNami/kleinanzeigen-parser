@@ -183,10 +183,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(uid):
         await update.message.reply_text(
             "/start\n/admin — відкрити адмін-меню\n/users — список користувачів та посилань\n/approve <user_id> — схвалити користувача\n"
+            "/assign_links <user_id_or_username> <посилання...> — швидке призначення посилань (trial або subscription)\n"
             "/set_location <user_id> <посилання...> ; cities=Місто1,Місто2 — призначити міста/посилання\n"
             "/view_location <user_id> — переглянути міста/посилання\n/delete_user <user_id> — видалити користувача\n"
             "/set_links <url1 url2 ...> — задати посилання собі\n/test_run — тестовий запуск парсингу\n"
-            "/broadcast <текст> — розсилка повідомлення всім користувачам\n"
+            "/broadcast <текст> — розсилка повідомлення всім користувачам\n\n"
+            "💡 Також можна відповісти Reply на повідомлення користувача з посиланнями командою /reply_assign\n"
         )
     else:
         await update.message.reply_text(
@@ -238,6 +240,155 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, reply_markup=_back_to_menu_keyboard())
     except Exception:
         import traceback; print("Error in /status:", traceback.format_exc())
+
+
+async def assign_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick command to assign links to a user with mode selection.
+    Usage: /assign_links <user_id_or_username> <url1> <url2> ...
+    Admin will be asked to choose between trial and subscription mode.
+    """
+    caller_id = str(update.effective_user.id)
+    if not is_admin(caller_id):
+        await update.message.reply_text("Лише адміністратор може виконувати цю команду.")
+        return
+    
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Використання: /assign_links <user_id або @username> <посилання...>\n\n"
+            "Приклад:\n"
+            "/assign_links 123456789 https://kleinanzeigen.de/... https://immowelt.de/...\n"
+            "/assign_links @username https://kleinanzeigen.de/..."
+        )
+        return
+    
+    # Extract user identifier and links
+    user_identifier = context.args[0].lstrip("@")
+    links_str = " ".join(context.args[1:]).strip()
+    
+    import re as _re
+    links = _re.findall(r"https?://\S+", links_str)
+    
+    if not links:
+        await update.message.reply_text("❌ Не знайдено жодного посилання. Переконайтеся, що ви вказали URL.")
+        return
+    
+    # Find user by ID or username
+    user_doc = None
+    if user_identifier.isdigit():
+        user_doc = um.db.users.find_one({"user_id": user_identifier})
+    else:
+        user_doc = um.db.users.find_one({"username": {"$regex": f"^{user_identifier}$", "$options": "i"}})
+    
+    if not user_doc:
+        await update.message.reply_text(
+            f"❌ Користувача '{user_identifier}' не знайдено.\n\n"
+            "Переконайтеся, що користувач вже взаємодіяв з ботом хоча б раз."
+        )
+        return
+    
+    target_id = user_doc["user_id"]
+    label = user_doc.get("username") or user_doc.get("first_name") or target_id
+    
+    # Store data in context for the callback
+    context.user_data["quick_assign_target_id"] = target_id
+    context.user_data["quick_assign_links"] = links
+    context.user_data["quick_assign_label"] = label
+    
+    # Ask admin to choose mode
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🧪 Тест (14 днів)", callback_data="quick_assign_trial"),
+            InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="quick_assign_subscription")
+        ],
+        [InlineKeyboardButton("❌ Скасувати", callback_data="quick_assign_cancel")]
+    ])
+    
+    links_preview = "\n".join([f"• {url}" for url in links[:5]])
+    if len(links) > 5:
+        links_preview += f"\n... та ще {len(links) - 5} посилань"
+    
+    await update.message.reply_text(
+        f"📋 Призначення посилань для користувача:\n"
+        f"👤 {label} (ID: {target_id})\n\n"
+        f"📎 Посилання ({len(links)}):\n{links_preview}\n\n"
+        f"Оберіть режим доступу:",
+        reply_markup=kb
+    )
+
+
+async def reply_assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Assign links from a user's message by replying to it.
+    Admin replies to user's message containing links with /reply_assign command.
+    """
+    caller_id = str(update.effective_user.id)
+    if not is_admin(caller_id):
+        await update.message.reply_text("Лише адміністратор може виконувати цю команду.")
+        return
+    
+    if not update.message.reply_to_message:
+        await update.message.reply_text(
+            "❌ Ця команда працює тільки як відповідь (Reply) на повідомлення користувача.\n\n"
+            "Щоб використати:\n"
+            "1. Знайдіть повідомлення користувача з посиланнями\n"
+            "2. Натисніть Reply на те повідомлення\n"
+            "3. Напишіть /reply_assign"
+        )
+        return
+    
+    replied_msg = update.message.reply_to_message
+    target_user = replied_msg.from_user
+    
+    if not target_user:
+        await update.message.reply_text("❌ Не вдалося визначити користувача з повідомлення.")
+        return
+    
+    target_id = str(target_user.id)
+    
+    # Extract links from the replied message
+    import re as _re
+    links = _re.findall(r"https?://\S+", replied_msg.text or "")
+    
+    if not links:
+        await update.message.reply_text(
+            "❌ У повідомленні не знайдено посилань.\n\n"
+            "Переконайтеся, що повідомлення містить URL (https://...)."
+        )
+        return
+    
+    # Ensure user exists in database
+    user_doc = um.db.users.find_one({"user_id": target_id})
+    if not user_doc:
+        # Create user record
+        um.upsert_user(target_id, target_user.username or "", target_user.first_name or "", target_user.last_name or "")
+        user_doc = um.db.users.find_one({"user_id": target_id})
+    
+    label = user_doc.get("username") or user_doc.get("first_name") or target_id
+    
+    # Store data in context for the callback
+    context.user_data["quick_assign_target_id"] = target_id
+    context.user_data["quick_assign_links"] = links
+    context.user_data["quick_assign_label"] = label
+    
+    # Ask admin to choose mode
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🧪 Тест (14 днів)", callback_data="quick_assign_trial"),
+            InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="quick_assign_subscription")
+        ],
+        [InlineKeyboardButton("❌ Скасувати", callback_data="quick_assign_cancel")]
+    ])
+    
+    links_preview = "\n".join([f"• {url}" for url in links[:5]])
+    if len(links) > 5:
+        links_preview += f"\n... та ще {len(links) - 5} посилань"
+    
+    await update.message.reply_text(
+        f"📋 Призначення посилань для користувача:\n"
+        f"👤 {label} (ID: {target_id})\n\n"
+        f"📎 Посилання ({len(links)}):\n{links_preview}\n\n"
+        f"Оберіть режим доступу:",
+        reply_markup=kb
+    )
 
 
 async def set_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -345,6 +496,8 @@ async def _post_init(app: Application):
                     BotCommand("start", "Почати (адмін)"),
                     BotCommand("admin", "Відкрити адмін-меню"),
                     BotCommand("users", "Список користувачів та посилань"),
+                    BotCommand("assign_links", "Швидке призначення посилань користувачу"),
+                    BotCommand("reply_assign", "Призначити посилання відповіддю на повідомлення"),
                     BotCommand("approve", "Схвалити користувача"),
                     BotCommand("set_location", "Призначити міста/посилання"),
                     BotCommand("view_location", "Переглянути міста/посилання"),
@@ -423,6 +576,8 @@ def build_app():
     app.add_handler(CommandHandler("delete_user", delete_user))
     app.add_handler(CommandHandler("set_location", set_location))
     app.add_handler(CommandHandler("view_location", view_location))
+    app.add_handler(CommandHandler("assign_links", assign_links))
+    app.add_handler(CommandHandler("reply_assign", reply_assign))
     app.add_handler(CommandHandler("set_links", set_links))
     app.add_handler(CommandHandler("test_run", test_run))
     app.add_handler(CommandHandler("force_run", force_run_cmd))
@@ -438,6 +593,9 @@ def build_app():
     # Admin inline approve/decline from user subscribe request
     app.add_handler(CallbackQueryHandler(admin_inline_approve_cb, pattern=r"^admin_inline_approve:"))
     app.add_handler(CallbackQueryHandler(admin_inline_decline_cb, pattern=r"^admin_inline_decline:"))
+    
+    # Quick assign callbacks for new /assign_links and /reply_assign commands
+    app.add_handler(CallbackQueryHandler(quick_assign_mode_cb, pattern=r"^quick_assign_(trial|subscription|cancel)$"))
     
     # Admin inline menu conversation - comes AFTER user callbacks
     app.add_handler(_admin_menu_conv())
@@ -624,10 +782,12 @@ async def _show_users_page(query, page: int):
             nav.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"admin_list_users:{page+1}"))
         if nav:
             rows.append(nav)
+        # Search button
+        rows.append([InlineKeyboardButton("🔍 Пошук за ID або @username", callback_data="admin_search_user")])
         # Cancel
         rows.append([InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")])
         text = (
-            "Оберіть користувача зі списку або перегорніть сторінки.\n"
+            "Оберіть користувача зі списку або використайте пошук.\n"
             f"Сторінка {page+1}, усього користувачів: {total}"
         )
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(rows))
@@ -699,6 +859,31 @@ async def admin_list_users_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         page = 0
     await _show_users_page(query, page)
+    return CHOOSE_USER
+
+
+async def admin_search_user_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enable search mode when admin clicks search button."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(str(query.from_user.id)):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    
+    # Enable search mode
+    context.user_data["awaiting_user_search"] = True
+    
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")]])
+    await query.edit_message_text(
+        "🔍 Пошук користувача\n\n"
+        "Надішліть ID користувача або @username для пошуку.\n\n"
+        "Приклади:\n"
+        "• 123456789\n"
+        "• @username\n"
+        "• username (без @)",
+        reply_markup=kb
+    )
     return CHOOSE_USER
 
 
@@ -878,6 +1063,7 @@ def _admin_menu_conv() -> ConversationHandler:
             CHOOSE_USER: [
                 CallbackQueryHandler(pick_user_cb, pattern=r"^pick_user:.*$"),
                 CallbackQueryHandler(admin_list_users_cb, pattern=r"^admin_list_users:\\d+$"),
+                CallbackQueryHandler(admin_search_user_cb, pattern=r"^admin_search_user$"),
                 CallbackQueryHandler(cancel_subscription_cb, pattern=r"^cancel_sub:.*$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, search_user_msg),
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$")
@@ -910,6 +1096,7 @@ def register_global_admin_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(admin_menu_cb, pattern=r"^admin_(add_links|broadcast|delete|cancel|paid|cancel_sub|users)$"))
     app.add_handler(CallbackQueryHandler(pick_user_cb, pattern=r"^pick_user:.*$"))
     app.add_handler(CallbackQueryHandler(admin_list_users_cb, pattern=r"^admin_list_users:\d+$"))
+    app.add_handler(CallbackQueryHandler(admin_search_user_cb, pattern=r"^admin_search_user$"))
     app.add_handler(CallbackQueryHandler(admin_users_page_cb, pattern=r"^admin_users_page:\d+$"))
     app.add_handler(CallbackQueryHandler(user_info_cb, pattern=r"^user_info:.*$"))
     app.add_handler(CallbackQueryHandler(noop_cb, pattern=r"^noop:.*$"))
@@ -1083,6 +1270,120 @@ async def cancel_subscription_cb(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         pass
     return ConversationHandler.END
+
+
+async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle mode selection for quick assign (trial or subscription)."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(str(query.from_user.id)):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return
+    
+    data = query.data
+    
+    if data == "quick_assign_cancel":
+        await query.edit_message_text("❌ Призначення скасовано.")
+        context.user_data.pop("quick_assign_target_id", None)
+        context.user_data.pop("quick_assign_links", None)
+        context.user_data.pop("quick_assign_label", None)
+        return
+    
+    target_id = context.user_data.get("quick_assign_target_id")
+    links = context.user_data.get("quick_assign_links")
+    label = context.user_data.get("quick_assign_label", target_id)
+    
+    if not target_id or not links:
+        await query.edit_message_text("❌ Помилка: дані не знайдено. Спробуйте ще раз.")
+        return
+    
+    # Determine mode
+    if data == "quick_assign_trial":
+        mode = "trial"
+        mode_text = "🧪 Тест (14 днів)"
+    elif data == "quick_assign_subscription":
+        mode = "subscription"
+        mode_text = "💳 Підписка (30 днів)"
+    else:
+        await query.edit_message_text("❌ Невідомий режим.")
+        return
+    
+    # Assign links
+    um.set_user_links(target_id, links, [], access_mode=mode)
+    
+    # Activate subscription based on mode
+    from datetime import datetime as _dt
+    if mode == "trial":
+        um.mark_trial(target_id)
+        user_doc = um.db.users.find_one({"user_id": target_id}) or {}
+        sub_until = user_doc.get("subscription_expires", "—")
+        try:
+            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+        except Exception:
+            sub_until_formatted = sub_until
+        
+        await query.edit_message_text(
+            f"✅ Посилання призначено!\n\n"
+            f"👤 Користувач: {label} (ID: {target_id})\n"
+            f"📎 Посилань: {len(links)}\n"
+            f"🧪 Тестовий період активовано до: {sub_until_formatted}\n\n"
+            f"Користувач отримає повідомлення."
+        )
+        
+        # Notify user
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"🧪 Тестовий період активовано на 14 днів!\n"
+                    f"Активний до: {sub_until_formatted}\n\n"
+                    f"📎 Додано посилань для відстеження: {len(links)}\n\n"
+                    "Бот перевірятиме нові оголошення кожні 30 хвилин та надсилатиме їх вам!"
+                )
+            )
+        except Exception as e:
+            print(f"Failed to notify user {target_id}: {e}")
+    
+    elif mode == "subscription":
+        um.mark_paid(target_id)
+        user_doc = um.db.users.find_one({"user_id": target_id}) or {}
+        sub_until = user_doc.get("subscription_expires", "—")
+        try:
+            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+        except Exception:
+            sub_until_formatted = sub_until
+        
+        await query.edit_message_text(
+            f"✅ Посилання призначено!\n\n"
+            f"👤 Користувач: {label} (ID: {target_id})\n"
+            f"📎 Посилань: {len(links)}\n"
+            f"💳 Підписка активована до: {sub_until_formatted}\n\n"
+            f"Користувач отримає повідомлення."
+        )
+        
+        # Notify user
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"💳 Підписку активовано на 30 днів!\n"
+                    f"Активна до: {sub_until_formatted}\n\n"
+                    f"📎 Додано посилань для відстеження: {len(links)}\n\n"
+                    "Бот перевірятиме нові оголошення кожні 30 хвилин та надсилатиме їх вам!"
+                )
+            )
+        except Exception as e:
+            print(f"Failed to notify user {target_id}: {e}")
+    
+    # Trigger immediate parsing
+    if context.application:
+        context.application.create_task(async_run_for_user(target_id, ignore_window=True))
+    
+    # Clear context
+    context.user_data.pop("quick_assign_target_id", None)
+    context.user_data.pop("quick_assign_links", None)
+    context.user_data.pop("quick_assign_label", None)
 
 
 async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):

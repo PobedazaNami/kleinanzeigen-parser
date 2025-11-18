@@ -1574,7 +1574,7 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=uid,
             text=message_text,
             reply_markup=_back_to_menu_keyboard(),
-            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_small_media=False, prefer_large_media=True, show_above_text=False) if is_new_activation else None,
+            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_large_media=True, show_above_text=True) if is_new_activation else None,
         )
         
         # Notify admins only for new activations

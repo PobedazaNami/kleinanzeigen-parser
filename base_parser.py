@@ -163,7 +163,8 @@ class BaseParser:
             pass
         self.conn.commit()
     
-    def send_telegram_sync(self, message: str, parse_mode: str = 'Markdown', disable_web_page_preview: bool = False):
+    def send_telegram_sync(self, message: str, parse_mode: str = 'Markdown', disable_web_page_preview: bool = False, 
+                          link_preview_options: Optional[Dict] = None):
         """Синхронная отправка сообщения в Telegram через HTTP API"""
         if not self.config.get('telegram', {}).get('bot_token') or not self.config.get('telegram', {}).get('chat_id'):
             return False
@@ -177,9 +178,14 @@ class BaseParser:
             data = {
                 'chat_id': chat_id,
                 'text': message,
-                'parse_mode': parse_mode,
-                'disable_web_page_preview': disable_web_page_preview
+                'parse_mode': parse_mode
             }
+            
+            # Use newer link_preview_options if provided, otherwise fall back to disable_web_page_preview
+            if link_preview_options is not None:
+                data['link_preview_options'] = json.dumps(link_preview_options)
+            else:
+                data['disable_web_page_preview'] = disable_web_page_preview
             
             response = sync_requests.post(url, data=data, timeout=10)
             response.raise_for_status()
@@ -341,7 +347,14 @@ class BaseParser:
             if listing.get('description'):
                 message += f"\n\n📄 Описание:\n{listing['description'][:200]}..."
             
-            self.send_telegram_sync(message, parse_mode='Markdown', disable_web_page_preview=False)
+            # Use link_preview_options to enable large media previews (for videos, images)
+            link_preview_opts = {
+                'is_disabled': False,
+                'prefer_large_media': True,
+                'show_above_text': True
+            }
+            
+            self.send_telegram_sync(message, parse_mode='Markdown', link_preview_options=link_preview_opts)
             
             self.cursor.execute(
                 'UPDATE listings SET notified = TRUE WHERE id = ?',

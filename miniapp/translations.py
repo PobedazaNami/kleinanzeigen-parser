@@ -2,6 +2,23 @@
 """
 Translation strings for the Telegram bot.
 Supports Ukrainian (uk), Russian (ru), and Arabic (ar).
+
+Usage:
+    from translations import get_text
+    
+    # Get text in specific language
+    text = get_text('welcome_text', 'uk')
+    
+    # Get text with formatting
+    text = get_text('support_text', 'ru', contact='@admin')
+    
+Language Selection Flow:
+    1. New user sends /start
+    2. Bot shows language selection buttons (Ukrainian, Russian, Arabic)
+    3. User selects preferred language
+    4. Language preference is saved to database
+    5. All subsequent messages use selected language
+    6. User can change language anytime via menu button
 """
 
 TRANSLATIONS = {

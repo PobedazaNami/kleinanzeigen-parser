@@ -74,10 +74,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Regular user path: register/update user
     um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
     
-    # Check if user has already selected a language
-    user_lang = um.get_user_language(uid)
+    # Check if user has already selected a language by checking the database directly
+    user_doc = um.db.users.find_one({"user_id": uid})
+    user_lang = user_doc.get("language") if user_doc else None
     
-    if not user_lang or user_lang is None or user_lang == "uk" and um.db.users.find_one({"user_id": uid, "language": None}):
+    if user_lang is None:
         # User hasn't selected a language yet, show language selection
         await update.message.reply_text(
             get_text("select_language", "uk"),

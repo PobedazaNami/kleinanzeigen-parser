@@ -25,10 +25,25 @@ class UserManager:
                 "date_added": now_iso,
                 "date_activated": None,
                 "bot_started_at": now_iso,
+                "language": None,  # Language not set yet, will be set on language selection
                 "notes": ""
             }},
             upsert=True
         )
+    
+    def set_user_language(self, user_id: str, language: str):
+        """Set the user's preferred language."""
+        self.db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"language": language}}
+        )
+    
+    def get_user_language(self, user_id: str) -> str:
+        """Get the user's preferred language, defaulting to 'uk' (Ukrainian)."""
+        user = self.db.users.find_one({"user_id": user_id})
+        if user and user.get("language"):
+            return user["language"]
+        return "uk"  # Default to Ukrainian
 
     def approve_user(self, user_id: str):
         """Mark user as approved by admin but DO NOT start subscription period.

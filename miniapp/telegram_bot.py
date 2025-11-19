@@ -14,6 +14,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID, SUPPORT_CONTACT
 from .user_manager import UserManager
 from .runner import async_run_for_user, async_run_cycle
+from .translations import get_text, LANGUAGE_NAMES
 
 um = UserManager()
 
@@ -44,6 +45,16 @@ if TELEGRAM_ADMIN_CHAT_ID:
 def is_admin(user_id: str) -> bool:
     return user_id in _admin_ids
 
+
+def _language_selection_keyboard():
+    """Build language selection keyboard with 3 languages."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text("language_ukrainian", "uk"), callback_data="lang_uk")],
+        [InlineKeyboardButton(get_text("language_russian", "ru"), callback_data="lang_ru")],
+        [InlineKeyboardButton(get_text("language_arabic", "ar"), callback_data="lang_ar")],
+    ])
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     uid = str(u.id)
@@ -52,16 +63,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
         um.db.users.update_one(
             {"user_id": uid},
-            {"$set": {"role": "admin", "status": "active", "date_activated": datetime.utcnow().isoformat()}},
+            {"$set": {"role": "admin", "status": "active", "date_activated": datetime.utcnow().isoformat(), "language": "uk"}},
         )
         await update.message.reply_text(
             "Ви адміністратор. Доступ активний. Нижче — адмін-меню.",
             reply_markup=_admin_menu_keyboard()
         )
         return
-    # Regular user path: register/update user and show appropriate menu based on status
+    
+    # Regular user path: register/update user
     um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
-    await update.message.reply_text(WELCOME_TEXT, reply_markup=_user_menu_keyboard(uid))
+    
+    # Check if user has already selected a language
+    user_lang = um.get_user_language(uid)
+    
+    if not user_lang or user_lang is None or user_lang == "uk" and um.db.users.find_one({"user_id": uid, "language": None}):
+        # User hasn't selected a language yet, show language selection
+        await update.message.reply_text(
+            get_text("select_language", "uk"),
+            reply_markup=_language_selection_keyboard()
+        )
+    else:
+        # User has already selected a language, show welcome message
+        welcome_text = get_text("welcome_text", user_lang)
+        await update.message.reply_text(welcome_text, reply_markup=_user_menu_keyboard(uid))
 
 
 def _user_menu_keyboard(uid: str | None = None):
@@ -76,9 +101,12 @@ def _user_menu_keyboard(uid: str | None = None):
     """
     rows = []
     has_active_sub = False
+    user_lang = "uk"  # Default language
     
     if uid is not None:
         u = um.db.users.find_one({"user_id": uid}) or {}
+        user_lang = u.get("language", "uk")
+        
         # Determine if user already має активний доступ (trial або підписка)
         from datetime import datetime as _dt
         now_iso = _dt.utcnow().isoformat()
@@ -102,20 +130,23 @@ def _user_menu_keyboard(uid: str | None = None):
 
     # Show "Try free" button only if user doesn't have active subscription
     if not has_active_sub:
-        rows.append([InlineKeyboardButton("🎁 Спробувати 14 днів БЕЗКОШТОВНО", callback_data="user_subscribe")])
+        rows.append([InlineKeyboardButton(get_text("btn_start_free", user_lang), callback_data="user_subscribe")])
     
     # Show subscription info button if user has active subscription
     if has_active_sub:
-        rows.append([InlineKeyboardButton("📅 Дата початку підписки", callback_data="user_sub_info")])
+        rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
     # Support button always visible
-    rows.append([InlineKeyboardButton("🛠️ Техпідтримка", callback_data="user_support")])
+    rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])
+    
+    # Language change button
+    rows.append([InlineKeyboardButton(get_text("btn_change_language", user_lang), callback_data="user_change_lang")])
 
     return InlineKeyboardMarkup(rows)
 
 
-def _back_to_menu_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Головне меню", callback_data="user_back_menu")]])
+def _back_to_menu_keyboard(lang: str = "uk"):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", lang), callback_data="user_back_menu")]])
 
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # /approve <user_id>
@@ -601,6 +632,8 @@ def build_app():
     app.add_handler(CommandHandler("help", help_cmd))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured
+    app.add_handler(CallbackQueryHandler(language_selection_cb, pattern=r"^lang_(uk|ru|ar)$"))
+    app.add_handler(CallbackQueryHandler(user_change_lang_cb, pattern=r"^user_change_lang$"))
     app.add_handler(CallbackQueryHandler(user_support_cb, pattern=r"^user_support$"))
     app.add_handler(CallbackQueryHandler(user_sub_info_cb, pattern=r"^user_sub_info$"))
     app.add_handler(CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"))
@@ -1518,6 +1551,9 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not um.db.users.find_one({"user_id": uid}):
             um.upsert_user(uid, u.username or "", u.first_name or "", u.last_name or "")
         
+        # Get user's language
+        user_lang = um.get_user_language(uid)
+        
         # Check if user already has active subscription or trial
         user_doc = um.db.users.find_one({"user_id": uid}) or {}
         from datetime import datetime as _dt
@@ -1552,38 +1588,28 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         video_instruction_url = "https://youtube.com/shorts/-g282XmZa3c"
         
         if is_new_activation:
-            message_text = (
-                "🎉 Ти на кроці до своєї квартири!\n\n"
-                "Щоб бот підбирав оголошення саме під тебе, потрібно один раз налаштувати пошук:\n\n"
-                "1️⃣ На сайтах Kleinanzeigen та Immowelt вистав фільтри так, як ти шукаєш квартиру "
-                "(місто, бюджет, кількість кімнат тощо) і скопіюй URL сторінки пошуку.\n"
-                "2️⃣ Надішли адміну до 4 таких посилань — бот буде сканувати саме їх.\n"
-                "3️⃣ Отримай безкоштовний тест на 14 днів, а після цього — доступ лише за 9€/місяць, "
-                "щоб отримувати найсвіжіші оголошення одним із перших!\n\n"
-                f"📹 Інструкція на відео: {video_instruction_url}\n"
-                f"📩 Адмін — @reeziat\n\n"
-                f"✅ Тестовий період активовано до: {sub_until_formatted}"
-            )
+            message_text = get_text("trial_welcome", user_lang, video_url=video_instruction_url, date=sub_until_formatted)
         else:
-            message_text = (
-                f"ℹ️ У вас вже активна підписка до: {sub_until_formatted}\n\n"
-                "Якщо потрібна допомога — звертайтеся до підтримки!"
-            )
+            message_text = get_text("trial_already_active", user_lang, date=sub_until_formatted)
         
         await context.bot.send_message(
             chat_id=uid,
             text=message_text,
-            reply_markup=_back_to_menu_keyboard(),
+            reply_markup=_back_to_menu_keyboard(user_lang),
             link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_large_media=True, show_above_text=True) if is_new_activation else None,
         )
         
         # Notify admins only for new activations
         if is_new_activation and _admin_ids:
-            text = (
-                f"✅ Новий користувач активував 14-денний триал\n"
-                f"ID: {uid}\nUsername: @{u.username if u.username else '—'}\n"
-                f"Ім'я: {u.first_name or ''} {u.last_name or ''}\n"
-                f"Активний до: {sub_until_formatted}"
+            # Admin notifications are always in Ukrainian
+            text = get_text(
+                "admin_new_trial", 
+                "uk",  # Admin messages in Ukrainian
+                user_id=uid,
+                username=u.username if u.username else '—',
+                first_name=u.first_name or '',
+                last_name=u.last_name or '',
+                date=sub_until_formatted
             )
             for aid in _admin_ids:
                 try:
@@ -1656,13 +1682,15 @@ async def admin_inline_decline_cb(update: Update, context: ContextTypes.DEFAULT_
 async def user_support_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    uid = str(q.from_user.id)
+    user_lang = um.get_user_language(uid)
     # Import support contact from config was done at top; fallback if empty
     contact = SUPPORT_CONTACT or "@admin"
     try:
         await context.bot.send_message(
             chat_id=q.message.chat_id,
-            text=f"🛠️ Техпідтримка\n\nЗв'яжіться з адміністратором: {contact}",
-            reply_markup=_back_to_menu_keyboard(),
+            text=get_text("support_text", user_lang, contact=contact),
+            reply_markup=_back_to_menu_keyboard(user_lang),
         )
     except Exception:
         pass
@@ -1672,6 +1700,7 @@ async def user_sub_info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     uid = str(q.from_user.id)
+    user_lang = um.get_user_language(uid)
     u = um.db.users.find_one({"user_id": uid})
     status = (u or {}).get("status")
     subscription_expires = (u or {}).get("subscription_expires")
@@ -1706,29 +1735,16 @@ async def user_sub_info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             paid_active = False
 
     if paid_active:
-        msg = (
-            f"📅 Ваша підписка активна до: {_fmt_date(subscription_expires)}\n\n"
-            "Протягом цього часу бот перевіряє Kleinanzeigen та Immowelt кожні 30 хвилин "
-            "і надсилає вам нові оголошення одним із перших."
-        )
+        msg = get_text("sub_info_text", user_lang, date=_fmt_date(subscription_expires))
     elif trial_active:
-        msg = (
-            f"🎁 Зараз у вас активний тестовий період до: {_fmt_date(trial_expires)}\n\n"
-            "Після 14 днів ви зможете продовжити доступ лише за 9€/місяць "
-            "і далі отримувати найсвіжіші оголошення одним із перших."
-        )
+        msg = get_text("sub_trial_until", user_lang, date=_fmt_date(trial_expires))
     elif requested:
-        msg = (
-            "⏳ Заявка на підписку вже відправлена адміністратору.\n\n"
-            "Після схвалення ви отримаєте 14 днів безкоштовного тесту, а потім — 9€/місяць."
-        )
+        msg = get_text("sub_request_pending", user_lang)
     else:
-        msg = (
-            "❌ Зараз підписка не активна.\n\n"
-            "Натисніть «Спробувати 14 днів БЕЗКОШТОВНО», щоб протестувати бота перед оплатою."
-        )
+        msg = get_text("sub_not_active", user_lang)
+    
     try:
-        await context.bot.send_message(chat_id=q.message.chat_id, text=msg, reply_markup=_back_to_menu_keyboard())
+        await context.bot.send_message(chat_id=q.message.chat_id, text=msg, reply_markup=_back_to_menu_keyboard(user_lang))
     except Exception:
         pass
 
@@ -1738,7 +1754,59 @@ async def user_back_menu_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     try:
         uid = str(q.from_user.id)
+        user_lang = um.get_user_language(uid)
+        welcome_text = get_text("welcome_text", user_lang)
         # Always будуємо меню на основі поточного стану користувача
-        await context.bot.send_message(chat_id=q.message.chat_id, text=WELCOME_TEXT, reply_markup=_user_menu_keyboard(uid))
+        await context.bot.send_message(chat_id=q.message.chat_id, text=welcome_text, reply_markup=_user_menu_keyboard(uid))
     except Exception:
         pass
+
+
+async def language_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle language selection from user."""
+    q = update.callback_query
+    await q.answer()
+    
+    uid = str(q.from_user.id)
+    data = q.data
+    
+    # Extract language code from callback data (lang_uk, lang_ru, lang_ar)
+    if data.startswith("lang_"):
+        lang = data.split("_")[1]
+        
+        # Save user's language preference
+        um.set_user_language(uid, lang)
+        
+        # Show language confirmation
+        confirmation = get_text("language_selected", lang)
+        await q.edit_message_text(confirmation)
+        
+        # Show welcome message in selected language
+        welcome_text = get_text("welcome_text", lang)
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=welcome_text,
+            reply_markup=_user_menu_keyboard(uid)
+        )
+
+
+async def user_change_lang_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle language change request from user menu."""
+    q = update.callback_query
+    await q.answer()
+    
+    uid = str(q.from_user.id)
+    user_lang = um.get_user_language(uid)
+    
+    try:
+        await q.edit_message_text(
+            get_text("select_language", user_lang),
+            reply_markup=_language_selection_keyboard()
+        )
+    except Exception:
+        # If edit fails, send new message
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=get_text("select_language", user_lang),
+            reply_markup=_language_selection_keyboard()
+        )

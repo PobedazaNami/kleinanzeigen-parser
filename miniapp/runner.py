@@ -55,6 +55,88 @@ def match_location(addr: str, preferred: List[str]) -> bool:
     return False
 
 
+def _extract_location_from_url(url: str) -> str:
+    """Extract location/city name from search URL for display purposes."""
+    from urllib.parse import urlparse
+    try:
+        # Try to extract city/location from URL path
+        parsed = urlparse(url)
+        path_parts = [p for p in parsed.path.split('/') if p]
+        # For kleinanzeigen: /s-wohnung-mieten/darmstadt/...
+        # For immowelt: /liste/darmstadt/...
+        if len(path_parts) >= 2:
+            # Second part is usually the city
+            return path_parts[1]
+        # If can't extract, return domain
+        domain = parsed.netloc.replace('www.', '')
+        return domain
+    except Exception:
+        return "unknown"
+
+
+def _format_admin_notification(user_id: str, user_data: Dict, per_url_stats: Dict[str, Dict], new_found: int) -> str:
+    """Format a readable admin notification about user's apartment search results.
+    
+    Args:
+        user_id: User's Telegram ID
+        user_data: Dict with user info (username, first_name, last_name)
+        per_url_stats: Statistics per URL (parsed, sent, filtered, dedup, limit)
+        new_found: Total number of new apartments sent to user
+        
+    Returns:
+        Formatted notification message
+    """
+    from urllib.parse import urlparse
+    
+    # Build user identifier
+    username = user_data.get("username", "")
+    first_name = user_data.get("first_name", "")
+    
+    if username:
+        user_display = f"@{username}"
+    elif first_name:
+        user_display = first_name
+    else:
+        user_display = f"ID: {user_id}"
+    
+    # Header with result
+    if new_found > 0:
+        header = f"✅ Користувачу {user_display} надіслано {new_found} нов{'у' if new_found == 1 else 'их'} квартир{'у' if new_found == 1 else ''}"
+    else:
+        header = f"ℹ️ Користувач {user_display} - нових квартир не знайдено"
+    
+    lines = [header]
+    
+    # Process each URL
+    for url, stats in per_url_stats.items():
+        location = _extract_location_from_url(url)
+        domain = urlparse(url).netloc.replace('www.', '')
+        
+        # Summary line for this URL
+        total = stats['parsed']
+        sent = stats['sent']
+        filtered = stats['filtered']
+        dedup = stats['dedup']
+        limit_reached = stats['limit']
+        
+        # Only show stats if there were any results
+        if total > 0:
+            stats_parts = []
+            stats_parts.append(f"знайдено: {total}")
+            if sent > 0:
+                stats_parts.append(f"✉️ надіслано: {sent}")
+            if dedup > 0:
+                stats_parts.append(f"дублі: {dedup}")
+            if filtered > 0:
+                stats_parts.append(f"відфільтровано: {filtered}")
+            if limit_reached > 0:
+                stats_parts.append(f"ліміт: {limit_reached}")
+            
+            lines.append(f"📍 {location} ({domain}): {' | '.join(stats_parts)}")
+    
+    return "\n".join(lines)
+
+
 async def send_message(chat_id: str, text: str) -> bool:
     if not application:
         return False
@@ -221,12 +303,8 @@ async def async_run_for_user(user_id: str, ignore_window: bool = True):
         await send_message(uid, "Немає нових квартир за вашими посиланнями")
         um.record_notification(uid, f"none-{datetime.utcnow().isoformat()}", "no_new_listings")
     if DEBUG_STATS and TELEGRAM_ADMIN_CHAT_ID:
-        lines = [f"[СТАТИСТИКА run_for_user] користувач {uid}"]
-        if not urls:
-            lines.append("(немає посилань)")
-        for url, st in per_url_stats.items():
-            lines.append(f"• {url}: parsed={st['parsed']} sent={st['sent']} filtered={st['filtered']} dedup={st['dedup']} limit={st['limit']}")
-        await send_message(TELEGRAM_ADMIN_CHAT_ID, "\n".join(lines))
+        notification_text = _format_admin_notification(uid, u, per_url_stats, new_found)
+        await send_message(TELEGRAM_ADMIN_CHAT_ID, notification_text)
     # Start/continue per-user cadence from the moment links were set / first run
     um.mark_user_run(uid)
 
@@ -329,10 +407,8 @@ async def _async_process_user(u: Dict, parsers_map: Dict[str, object], parsed_ca
         await send_message(uid, "Немає нових квартир за вашими посиланнями")
         um.record_notification(uid, f"none-{datetime.utcnow().isoformat()}", "no_new_listings")
     elif DEBUG_STATS and TELEGRAM_ADMIN_CHAT_ID:
-        lines = [f"[СТАТИСТИКА] користувач {uid}"]
-        for url, st in per_url_stats.items():
-            lines.append(f"• {url}: знайдено={st['parsed']} надіслано={st['sent']} відфільтровано={st['filtered']} дедуп={st['dedup']} ліміт={st['limit']}")
-        await send_message(TELEGRAM_ADMIN_CHAT_ID, "\n".join(lines))
+        notification_text = _format_admin_notification(uid, u, per_url_stats, new_found)
+        await send_message(TELEGRAM_ADMIN_CHAT_ID, notification_text)
     um.mark_user_run(uid)
 
 

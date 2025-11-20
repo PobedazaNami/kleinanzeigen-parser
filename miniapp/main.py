@@ -1,6 +1,5 @@
 from .telegram_bot import (
     build_app,
-    user_subscribe_cb,
     admin_inline_approve_cb,
     admin_inline_decline_cb,
 )
@@ -11,7 +10,8 @@ def main():
     app = build_app()
     set_application_for_send(app)
     from telegram.ext import CallbackQueryHandler
-    app.add_handler(CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"))
+    # NOTE: user_subscribe_cb is now handled by the user setup conversation handler in build_app()
+    # Do not add it again here to avoid conflicts
     app.add_handler(CallbackQueryHandler(admin_inline_approve_cb, pattern=r"^admin_inline_approve:.*$"))
     app.add_handler(CallbackQueryHandler(admin_inline_decline_cb, pattern=r"^admin_inline_decline:.*$"))
 

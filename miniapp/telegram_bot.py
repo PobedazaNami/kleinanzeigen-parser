@@ -611,6 +611,171 @@ async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Помилка: {e}")
 
 
+# ---- User Setup Request Conversation ----
+async def user_setup_city_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle city input from user."""
+    city = (update.message.text or "").strip()
+    user_lang = context.user_data.get("setup_user_lang", "uk")
+    
+    if not city:
+        await update.message.reply_text(get_text("setup_ask_city", user_lang))
+        return USER_SETUP_ASK_CITY
+    
+    # Store city
+    context.user_data["setup_city"] = city
+    
+    # Ask for price
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
+    await update.message.reply_text(
+        get_text("setup_ask_price", user_lang),
+        reply_markup=cancel_kb
+    )
+    
+    return USER_SETUP_ASK_PRICE
+
+
+async def user_setup_price_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle price input from user."""
+    price = (update.message.text or "").strip()
+    user_lang = context.user_data.get("setup_user_lang", "uk")
+    
+    if not price:
+        await update.message.reply_text(get_text("setup_ask_price", user_lang))
+        return USER_SETUP_ASK_PRICE
+    
+    # Store price
+    context.user_data["setup_price"] = price
+    
+    # Ask for rooms
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
+    await update.message.reply_text(
+        get_text("setup_ask_rooms", user_lang),
+        reply_markup=cancel_kb
+    )
+    
+    return USER_SETUP_ASK_ROOMS
+
+
+async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle rooms input from user and send setup request to admin."""
+    rooms = (update.message.text or "").strip()
+    user_lang = context.user_data.get("setup_user_lang", "uk")
+    uid = context.user_data.get("setup_user_id")
+    
+    if not rooms:
+        await update.message.reply_text(get_text("setup_ask_rooms", user_lang))
+        return USER_SETUP_ASK_ROOMS
+    
+    # Store rooms
+    context.user_data["setup_rooms"] = rooms
+    
+    # Get all setup data
+    city = context.user_data.get("setup_city", "—")
+    price = context.user_data.get("setup_price", "—")
+    
+    # Store setup request in database
+    um.db.users.update_one(
+        {"user_id": uid},
+        {"$set": {
+            "setup_request": {
+                "city": city,
+                "price": price,
+                "rooms": rooms,
+                "requested_at": datetime.utcnow().isoformat()
+            }
+        }}
+    )
+    
+    # Send confirmation to user
+    await update.message.reply_text(
+        get_text("setup_request_sent", user_lang, city=city, price=price, rooms=rooms),
+        reply_markup=_back_to_menu_keyboard(user_lang)
+    )
+    
+    # Send notification to admins
+    if _admin_ids:
+        u = update.effective_user
+        username = f"@{u.username}" if u.username else u.first_name or "—"
+        
+        admin_text = get_text(
+            "admin_setup_request",
+            "uk",  # Admin messages in Ukrainian
+            username=username,
+            user_id=uid,
+            city=city,
+            price=price,
+            rooms=rooms
+        )
+        
+        for aid in _admin_ids:
+            try:
+                await context.bot.send_message(chat_id=aid, text=admin_text)
+            except Exception as e:
+                print(f"Failed to notify admin {aid}: {e}")
+    
+    # Clear context
+    context.user_data.pop("setup_user_lang", None)
+    context.user_data.pop("setup_user_id", None)
+    context.user_data.pop("setup_city", None)
+    context.user_data.pop("setup_price", None)
+    context.user_data.pop("setup_rooms", None)
+    
+    return ConversationHandler.END
+
+
+async def user_setup_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle cancellation of setup request."""
+    query = update.callback_query
+    await query.answer()
+    
+    uid = str(query.from_user.id)
+    user_lang = um.get_user_language(uid)
+    
+    # Clear context
+    context.user_data.pop("setup_user_lang", None)
+    context.user_data.pop("setup_user_id", None)
+    context.user_data.pop("setup_city", None)
+    context.user_data.pop("setup_price", None)
+    context.user_data.pop("setup_rooms", None)
+    
+    # Return to menu
+    welcome_text = get_text("welcome_text", user_lang)
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=welcome_text,
+        reply_markup=_user_menu_keyboard(uid)
+    )
+    
+    return ConversationHandler.END
+
+
+def _user_setup_conv() -> ConversationHandler:
+    """Build the user setup request conversation handler."""
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$")
+        ],
+        states={
+            USER_SETUP_ASK_CITY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_setup_city_msg),
+                CallbackQueryHandler(user_setup_cancel_cb, pattern=r"^user_setup_cancel$")
+            ],
+            USER_SETUP_ASK_PRICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_setup_price_msg),
+                CallbackQueryHandler(user_setup_cancel_cb, pattern=r"^user_setup_cancel$")
+            ],
+            USER_SETUP_ASK_ROOMS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_setup_rooms_msg),
+                CallbackQueryHandler(user_setup_cancel_cb, pattern=r"^user_setup_cancel$")
+            ],
+        },
+        fallbacks=[
+            CallbackQueryHandler(user_setup_cancel_cb, pattern=r"^user_setup_cancel$")
+        ],
+        allow_reentry=True,
+    )
+
+
 def build_app():
     from telegram.ext import JobQueue
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(_post_init).job_queue(JobQueue()).build()
@@ -633,11 +798,11 @@ def build_app():
     app.add_handler(CommandHandler("help", help_cmd))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured
+    # NOTE: user_subscribe_cb is handled by user setup conversation, so NOT registered here
     app.add_handler(CallbackQueryHandler(language_selection_cb, pattern=r"^lang_(uk|ru|ar)$"))
     app.add_handler(CallbackQueryHandler(user_change_lang_cb, pattern=r"^user_change_lang$"))
     app.add_handler(CallbackQueryHandler(user_support_cb, pattern=r"^user_support$"))
     app.add_handler(CallbackQueryHandler(user_sub_info_cb, pattern=r"^user_sub_info$"))
-    app.add_handler(CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"))
     app.add_handler(CallbackQueryHandler(user_back_menu_cb, pattern=r"^user_back_menu$"))
     
     # Admin inline approve/decline from user subscribe request
@@ -646,6 +811,9 @@ def build_app():
     
     # Quick assign callbacks for new /assign_links and /reply_assign commands
     app.add_handler(CallbackQueryHandler(quick_assign_mode_cb, pattern=r"^quick_assign_(trial|subscription|cancel)$"))
+    
+    # User setup request conversation - MUST come before other callback handlers that might conflict
+    app.add_handler(_user_setup_conv())
     
     # Admin inline menu conversation - comes AFTER user callbacks
     app.add_handler(_admin_menu_conv())
@@ -658,6 +826,9 @@ def build_app():
 # ---- Admin Inline Menu Conversation ----
 # Added BROADCAST_ENTER state for admin broadcast flow and CHOOSE_USER_PAID for payment confirmation
 ADMIN_MENU, CHOOSE_USER, CHOOSE_MODE, ENTER_LINKS, CONFIRM_DELETE, BROADCAST_ENTER, CHOOSE_USER_PAID = range(7)
+
+# User setup request conversation states
+USER_SETUP_ASK_CITY, USER_SETUP_ASK_PRICE, USER_SETUP_ASK_ROOMS = range(7, 10)
 
 # Pagination size for admin user list
 PAGE_SIZE = 10
@@ -1063,6 +1234,9 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("assign_mode")
     um.set_user_links(target_id, links, [], access_mode=mode)
     
+    # Get user's language for localized notification
+    target_lang = um.get_user_language(target_id)
+    
     # Start subscription period based on mode selected
     if mode == "trial":
         # Trial mode: 4 days, already set in set_user_links
@@ -1070,7 +1244,7 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text="🧪 Тестовий період активовано на 4 дні!\n\nПочинаю відстежувати нові оголошення кожні 30 хвилин."
+                text=get_text("setup_configured", target_lang)
             )
         except Exception:
             pass
@@ -1083,7 +1257,7 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"💳 Підписку активовано на 30 днів!\nАктивна до: {sub_until}\n\nПочинаю відстежувати нові оголошення кожні 30 хвилин."
+                text=get_text("setup_configured", target_lang)
             )
         except Exception:
             pass
@@ -1467,6 +1641,9 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
     # Assign links
     um.set_user_links(target_id, links, [], access_mode=mode)
     
+    # Get user's language for localized notification
+    target_lang = um.get_user_language(target_id)
+    
     # Activate subscription based on mode
     from datetime import datetime as _dt
     if mode == "trial":
@@ -1486,16 +1663,11 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
             f"Користувач отримає повідомлення."
         )
         
-        # Notify user
+        # Notify user in their language
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=(
-                    f"🧪 Тестовий період активовано на 14 днів!\n"
-                    f"Активний до: {sub_until_formatted}\n\n"
-                    f"📎 Додано посилань для відстеження: {len(links)}\n\n"
-                    "Бот перевірятиме нові оголошення кожні 30 хвилин та надсилатиме їх вам!"
-                )
+                text=get_text("setup_configured", target_lang)
             )
         except Exception as e:
             print(f"Failed to notify user {target_id}: {e}")
@@ -1517,16 +1689,11 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
             f"Користувач отримає повідомлення."
         )
         
-        # Notify user
+        # Notify user in their language
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=(
-                    f"💳 Підписку активовано на 30 днів!\n"
-                    f"Активна до: {sub_until_formatted}\n\n"
-                    f"📎 Додано посилань для відстеження: {len(links)}\n\n"
-                    "Бот перевірятиме нові оголошення кожні 30 хвилин та надсилатиме їх вам!"
-                )
+                text=get_text("setup_configured", target_lang)
             )
         except Exception as e:
             print(f"Failed to notify user {target_id}: {e}")
@@ -1542,6 +1709,7 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the user setup request conversation when user clicks 'Try 14 days FREE'."""
     query = update.callback_query
     await query.answer()
     u = query.from_user
@@ -1569,58 +1737,44 @@ async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         
-        # If user doesn't have active subscription, activate trial
-        if not has_active:
-            um.mark_trial(uid)
-            # Refresh user doc after activation
-            user_doc = um.db.users.find_one({"user_id": uid}) or {}
-            is_new_activation = True
-        else:
-            is_new_activation = False
-        
-        # Get subscription expiration date for display
-        sub_until = user_doc.get("subscription_expires", "—")
-        try:
-            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
-        except Exception:
-            sub_until_formatted = sub_until
-        
-        # Send instruction message with video
-        video_instruction_url = "https://youtube.com/shorts/-g282XmZa3c"
-        
-        if is_new_activation:
-            message_text = get_text("trial_welcome", user_lang, video_url=video_instruction_url, date=sub_until_formatted)
-        else:
+        # If user already has active subscription, show info message
+        if has_active:
+            sub_until = user_doc.get("subscription_expires", "—")
+            try:
+                sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+            except Exception:
+                sub_until_formatted = sub_until
+            
             message_text = get_text("trial_already_active", user_lang, date=sub_until_formatted)
+            await context.bot.send_message(
+                chat_id=uid,
+                text=message_text,
+                reply_markup=_back_to_menu_keyboard(user_lang),
+            )
+            return ConversationHandler.END
         
+        # Activate trial immediately
+        um.mark_trial(uid)
+        
+        # Start setup conversation - ask for city
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
         await context.bot.send_message(
             chat_id=uid,
-            text=message_text,
-            reply_markup=_back_to_menu_keyboard(user_lang),
-            link_preview_options=LinkPreviewOptions(url=video_instruction_url, prefer_large_media=True, show_above_text=True) if is_new_activation else None,
+            text=get_text("setup_ask_city", user_lang),
+            reply_markup=cancel_kb
         )
         
-        # Notify admins only for new activations
-        if is_new_activation and _admin_ids:
-            # Admin notifications are always in Ukrainian
-            text = get_text(
-                "admin_new_trial", 
-                "uk",  # Admin messages in Ukrainian
-                user_id=uid,
-                username=u.username if u.username else '—',
-                first_name=u.first_name or '',
-                last_name=u.last_name or '',
-                date=sub_until_formatted
-            )
-            for aid in _admin_ids:
-                try:
-                    await context.bot.send_message(chat_id=aid, text=text)
-                except Exception:
-                    pass
+        # Store language in context for conversation
+        context.user_data["setup_user_lang"] = user_lang
+        context.user_data["setup_user_id"] = uid
+        
+        return USER_SETUP_ASK_CITY
+        
     except Exception as e:
-        print(f"Error activating trial for {uid}: {e}")
+        print(f"Error starting setup for {uid}: {e}")
         import traceback
         traceback.print_exc()
+        return ConversationHandler.END
 
 
 async def admin_inline_approve_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):

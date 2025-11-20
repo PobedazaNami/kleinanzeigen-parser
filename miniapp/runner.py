@@ -86,6 +86,8 @@ def _format_admin_notification(user_id: str, user_data: Dict, per_url_stats: Dic
     Returns:
         Formatted notification message
     """
+    from urllib.parse import urlparse
+    
     # Build user identifier
     username = user_data.get("username", "")
     first_name = user_data.get("first_name", "")
@@ -108,7 +110,6 @@ def _format_admin_notification(user_id: str, user_data: Dict, per_url_stats: Dic
     # Process each URL
     for url, stats in per_url_stats.items():
         location = _extract_location_from_url(url)
-        from urllib.parse import urlparse
         domain = urlparse(url).netloc.replace('www.', '')
         
         # Summary line for this URL

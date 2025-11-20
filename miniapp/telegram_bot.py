@@ -137,6 +137,10 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
+    # Show "Add more cities" button if user has active subscription
+    if has_active_sub:
+        rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
+    
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])
     
@@ -787,7 +791,8 @@ def _user_setup_conv() -> ConversationHandler:
     """Build the user setup request conversation handler."""
     return ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$")
+            CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"),
+            CallbackQueryHandler(user_add_cities_cb, pattern=r"^user_add_cities$")
         ],
         states={
             USER_SETUP_ASK_CITY: [
@@ -832,7 +837,7 @@ def build_app():
     app.add_handler(CommandHandler("help", help_cmd))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured
-    # NOTE: user_subscribe_cb is handled by user setup conversation, so NOT registered here
+    # NOTE: user_subscribe_cb and user_add_cities_cb are handled by user setup conversation, so NOT registered here
     app.add_handler(CallbackQueryHandler(language_selection_cb, pattern=r"^lang_(uk|ru|ar)$"))
     app.add_handler(CallbackQueryHandler(user_change_lang_cb, pattern=r"^user_change_lang$"))
     app.add_handler(CallbackQueryHandler(user_support_cb, pattern=r"^user_support$"))
@@ -1945,6 +1950,38 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("quick_assign_target_id", None)
     context.user_data.pop("quick_assign_links", None)
     context.user_data.pop("quick_assign_label", None)
+
+
+async def user_add_cities_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the user setup request conversation when user clicks 'Add more cities'."""
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    uid = str(u.id)
+    
+    try:
+        # Get user's language
+        user_lang = um.get_user_language(uid)
+        
+        # Start setup conversation - ask for city
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
+        await context.bot.send_message(
+            chat_id=uid,
+            text=get_text("setup_ask_city", user_lang),
+            reply_markup=cancel_kb
+        )
+        
+        # Store language in context for conversation
+        context.user_data["setup_user_lang"] = user_lang
+        context.user_data["setup_user_id"] = uid
+        
+        return USER_SETUP_ASK_CITY
+        
+    except Exception as e:
+        print(f"Error starting add cities for {uid}: {e}")
+        import traceback
+        traceback.print_exc()
+        return ConversationHandler.END
 
 
 async def user_subscribe_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):

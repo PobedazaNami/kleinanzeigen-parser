@@ -1032,7 +1032,7 @@ async def pick_user_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["target_user_id"] = target_id
     # Ask for assignment mode: trial vs subscription
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧪 Тест (4 дні)", callback_data="mode_trial"), InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="mode_subscription")],
+        [InlineKeyboardButton("🧪 Тест (14 днів)", callback_data="mode_trial"), InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="mode_subscription")],
         [InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")],
     ])
     await query.edit_message_text(
@@ -1328,7 +1328,7 @@ async def search_user_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "✅ активний" if status == "active" else "⏳ очікує" if status == "pending" else "❌ неактивний"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧪 Тест (4 дні)", callback_data="mode_trial"), InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="mode_subscription")],
+        [InlineKeyboardButton("🧪 Тест (14 днів)", callback_data="mode_trial"), InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="mode_subscription")],
         [InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")],
     ])
     await update.message.reply_text(
@@ -1445,8 +1445,8 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Start subscription period based on mode selected
     if mode == "trial":
-        # Trial mode: 4 days, already set in set_user_links
-        await update.message.reply_text(f"✅ Посилання оновлено для {target_id}.\n🧪 Тестовий період на 4 дні активовано.")
+        # Trial mode: 14 days, already set in set_user_links
+        await update.message.reply_text(f"✅ Посилання оновлено для {target_id}.\n🧪 Тестовий період на 14 днів активовано.")
         try:
             await context.bot.send_message(
                 chat_id=target_id,

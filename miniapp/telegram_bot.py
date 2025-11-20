@@ -1008,17 +1008,10 @@ async def admin_menu_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Оберіть користувача для активації підписки (оплата отримана):", reply_markup=InlineKeyboardMarkup(rows))
         return CHOOSE_USER_PAID
     elif data == "admin_delete":
-        # list users to pick for deletion
-        users = list(um.db.users.find({"role": {"$ne": "admin"}}, {"user_id": 1, "username": 1, "first_name": 1}).limit(10))
-        if not users:
-            await query.edit_message_text("Немає користувачів для видалення.")
-            return ConversationHandler.END
-        rows = []
-        for u in users:
-            label = u.get("username") or u.get("first_name") or u.get("user_id")
-            rows.append([InlineKeyboardButton(f"Видалити {label} ({u['user_id']})", callback_data=f"del_user:{u['user_id']}")])
-        rows.append([InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")])
-        await query.edit_message_text("Виберіть користувача для видалення:", reply_markup=InlineKeyboardMarkup(rows))
+        # Show delete users page with search option
+        await _show_delete_users_page(query, page=0)
+        # Ensure search mode is off by default
+        context.user_data.pop("awaiting_user_delete_search", None)
         return CONFIRM_DELETE
     elif data == "admin_cancel":
         await query.edit_message_text("Скасовано.")
@@ -1154,6 +1147,69 @@ async def _show_users_overview_page(query, page: int):
             pass
 
 
+async def _show_delete_users_page(query, page: int):
+    """Render a page with users for deletion selection."""
+    try:
+        criteria = {"role": {"$ne": "admin"}}
+        total = um.db.users.count_documents(criteria)
+        skip = max(0, page) * PAGE_SIZE
+        cursor = (
+            um.db.users.find(criteria, {"user_id": 1, "username": 1, "first_name": 1, "status": 1, "subscription_expires": 1, "date_added": 1})
+            .sort("date_added", -1)
+            .skip(skip)
+            .limit(PAGE_SIZE)
+        )
+        users = list(cursor)
+        rows: List[List[InlineKeyboardButton]] = []
+        
+        def _status_emoji(u: Dict[str, Any]) -> str:
+            s = u.get("status")
+            if s == "active":
+                return "✅"
+            if s == "pending":
+                return "⏳"
+            if s == "banned":
+                return "⛔"
+            return "⚪"
+        
+        for u in users:
+            label_base = u.get("username") or u.get("first_name") or u.get("user_id")
+            label = f"{_status_emoji(u)} {label_base} ({u.get('user_id')})"
+            rows.append([
+                InlineKeyboardButton(f"🗑 {label}", callback_data=f"del_user:{u.get('user_id')}")
+            ])
+        
+        # Navigation row
+        nav: List[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"admin_delete_users_page:{page-1}"))
+        if (page + 1) * PAGE_SIZE < total:
+            nav.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"admin_delete_users_page:{page+1}"))
+        if nav:
+            rows.append(nav)
+        
+        # Search button
+        rows.append([InlineKeyboardButton("🔍 Пошук за ID або @username", callback_data="admin_search_user_delete")])
+        # Cancel
+        rows.append([InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")])
+        
+        text = (
+            "🗑 Видалення користувача\n\n"
+            "Оберіть користувача зі списку або використайте пошук.\n"
+            f"Сторінка {page+1}, усього користувачів: {total}\n\n"
+            "⚠️ УВАГА: Видалення незворотне і видалить:\n"
+            "• Дані користувача\n"
+            "• Фільтри та посилання\n"
+            "• Історію сповіщень"
+        )
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(rows))
+    except Exception as e:
+        try:
+            await query.edit_message_text(f"Помилка завантаження списку користувачів: {e}")
+        except Exception:
+            pass
+
+
 async def admin_list_users_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle pagination for users list in admin add-links flow."""
     query = update.callback_query
@@ -1166,6 +1222,20 @@ async def admin_list_users_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
         page = 0
     await _show_users_page(query, page)
     return CHOOSE_USER
+
+
+async def admin_delete_users_page_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle pagination for users list in admin delete flow."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    try:
+        _, page_str = data.split(":", 1)
+        page = int(page_str)
+    except Exception:
+        page = 0
+    await _show_delete_users_page(query, page)
+    return CONFIRM_DELETE
 
 
 async def admin_search_user_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1191,6 +1261,32 @@ async def admin_search_user_cb(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=kb
     )
     return CHOOSE_USER
+
+
+async def admin_search_user_delete_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enable search mode when admin clicks search button in delete flow."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(str(query.from_user.id)):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    
+    # Enable search mode for deletion
+    context.user_data["awaiting_user_delete_search"] = True
+    
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")]])
+    await query.edit_message_text(
+        "🔍 Пошук користувача для видалення\n\n"
+        "Надішліть ID користувача або @username для пошуку.\n\n"
+        "Приклади:\n"
+        "• 123456789\n"
+        "• @username\n"
+        "• username (без @)\n\n"
+        "⚠️ Користувача буде видалено повністю з бази даних!",
+        reply_markup=kb
+    )
+    return CONFIRM_DELETE
 
 
 async def search_user_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1240,6 +1336,78 @@ async def search_user_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
     )
     return CHOOSE_MODE
+
+
+async def search_user_delete_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text input when admin searches for a user to delete by ID or username."""
+    uid = str(update.effective_user.id)
+    if not is_admin(uid):
+        return ConversationHandler.END
+    
+    # Check if we're expecting user delete search
+    if not context.user_data.get("awaiting_user_delete_search"):
+        return ConversationHandler.END
+    
+    search_text = (update.message.text or "").strip().lstrip("@")
+    
+    # Try to find user by user_id or username
+    user_doc = None
+    if search_text.isdigit():
+        # Search by user_id
+        user_doc = um.db.users.find_one({"user_id": search_text})
+    else:
+        # Search by username (case-insensitive)
+        user_doc = um.db.users.find_one({"username": {"$regex": f"^{search_text}$", "$options": "i"}})
+    
+    if not user_doc:
+        await update.message.reply_text(
+            f"❌ Користувача '{search_text}' не знайдено.\n\n"
+            "Спробуйте ще раз або натисніть Скасувати.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")]])
+        )
+        return CONFIRM_DELETE
+    
+    # Check if trying to delete admin
+    if user_doc.get("role") == "admin":
+        await update.message.reply_text(
+            "⛔ Неможливо видалити адміністратора!\n\n"
+            "Спробуйте іншого користувача або натисніть Скасувати.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")]])
+        )
+        return CONFIRM_DELETE
+    
+    # User found, show confirmation
+    target_id = user_doc["user_id"]
+    context.user_data.pop("awaiting_user_delete_search", None)
+    
+    label = user_doc.get("username") or user_doc.get("first_name") or target_id
+    status = user_doc.get("status", "pending")
+    status_text = "✅ активний" if status == "active" else "⏳ очікує" if status == "pending" else "❌ неактивний"
+    
+    # Get additional info
+    filters = um.get_user_filters(target_id)
+    links_count = len(filters.get("search_urls", [])) if filters else 0
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Підтвердити видалення", callback_data=f"del_user:{target_id}")],
+        [InlineKeyboardButton("❌ Скасувати", callback_data="admin_cancel")],
+    ])
+    
+    await update.message.reply_text(
+        f"🗑 Видалення користувача\n\n"
+        f"👤 Користувач: {label}\n"
+        f"🆔 ID: {target_id}\n"
+        f"📊 Статус: {status_text}\n"
+        f"🔗 Посилань: {links_count}\n\n"
+        f"⚠️ УВАГА: Видалення незворотне!\n"
+        f"Буде видалено:\n"
+        f"• Дані користувача\n"
+        f"• Фільтри та {links_count} посилань\n"
+        f"• Історію сповіщень\n\n"
+        f"Підтвердити видалення?",
+        reply_markup=kb,
+    )
+    return CONFIRM_DELETE
 
 
 async def choose_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1434,7 +1602,12 @@ def _admin_menu_conv() -> ConversationHandler:
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$")
             ],
             CHOOSE_MODE: [CallbackQueryHandler(choose_mode_cb, pattern=r"^mode_(trial|subscription)$")],
-            CONFIRM_DELETE: [CallbackQueryHandler(confirm_delete_cb, pattern=r"^del_user:.*$|^admin_cancel$")],
+            CONFIRM_DELETE: [
+                CallbackQueryHandler(confirm_delete_cb, pattern=r"^del_user:.*$|^admin_cancel$"),
+                CallbackQueryHandler(admin_delete_users_page_cb, pattern=r"^admin_delete_users_page:\d+$"),
+                CallbackQueryHandler(admin_search_user_delete_cb, pattern=r"^admin_search_user_delete$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, search_user_delete_msg),
+            ],
             ENTER_LINKS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_links_msg),
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$")
@@ -1463,6 +1636,8 @@ def register_global_admin_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(admin_list_users_cb, pattern=r"^admin_list_users:\d+$"))
     app.add_handler(CallbackQueryHandler(admin_search_user_cb, pattern=r"^admin_search_user$"))
     app.add_handler(CallbackQueryHandler(admin_users_page_cb, pattern=r"^admin_users_page:\d+$"))
+    app.add_handler(CallbackQueryHandler(admin_delete_users_page_cb, pattern=r"^admin_delete_users_page:\d+$"))
+    app.add_handler(CallbackQueryHandler(admin_search_user_delete_cb, pattern=r"^admin_search_user_delete$"))
     app.add_handler(CallbackQueryHandler(user_info_cb, pattern=r"^user_info:.*$"))
     app.add_handler(CallbackQueryHandler(noop_cb, pattern=r"^noop:.*$"))
     app.add_handler(CallbackQueryHandler(admin_menu_back_cb, pattern=r"^admin_menu_back$"))
@@ -1596,10 +1771,36 @@ async def confirm_delete_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Помилка вибору користувача.")
         return ConversationHandler.END
     target_id = data.split(":", 1)[1]
+    
+    # Get user info before deletion for confirmation message
+    user_doc = um.db.users.find_one({"user_id": target_id})
+    if not user_doc:
+        await query.edit_message_text(f"❌ Користувача {target_id} не знайдено в базі даних.")
+        return ConversationHandler.END
+    
+    label = user_doc.get("username") or user_doc.get("first_name") or target_id
+    
+    # Get stats before deletion
+    filters = um.get_user_filters(target_id)
+    links_count = len(filters.get("search_urls", [])) if filters else 0
+    notifications_count = um.db.notification_stats.count_documents({"recipient_id": target_id})
+    
+    # Perform deletion
     if um.delete_user(target_id):
-        await query.edit_message_text(f"Користувача {target_id} видалено.")
+        await query.edit_message_text(
+            f"✅ Користувача успішно видалено!\n\n"
+            f"👤 {label} (ID: {target_id})\n\n"
+            f"Видалено:\n"
+            f"• Дані користувача\n"
+            f"• {links_count} посилань\n"
+            f"• {notifications_count} записів сповіщень\n\n"
+            f"Користувач може зареєструватися знову через /start"
+        )
     else:
-        await query.edit_message_text("Не вдалося видалити (можливо, користувача не знайдено або це адмін).")
+        await query.edit_message_text(
+            f"❌ Не вдалося видалити користувача {target_id}\n\n"
+            f"Можливо, це адміністратор або користувача не існує."
+        )
     return ConversationHandler.END
 
 

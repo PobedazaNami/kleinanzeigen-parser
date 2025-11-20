@@ -692,7 +692,7 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=_back_to_menu_keyboard(user_lang)
     )
     
-    # Send notification to admins
+    # Send notification to admins with inline buttons
     if _admin_ids:
         u = update.effective_user
         username = f"@{u.username}" if u.username else u.first_name or "—"
@@ -707,9 +707,18 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
             rooms=rooms
         )
         
+        # Add inline button for quick link assignment
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Додати посилання", callback_data=f"admin_quick_add_links:{uid}")],
+        ])
+        
         for aid in _admin_ids:
             try:
-                await context.bot.send_message(chat_id=aid, text=admin_text)
+                await context.bot.send_message(
+                    chat_id=aid, 
+                    text=admin_text,
+                    reply_markup=admin_kb
+                )
             except Exception as e:
                 print(f"Failed to notify admin {aid}: {e}")
     
@@ -747,6 +756,31 @@ async def user_setup_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     
     return ConversationHandler.END
+
+
+def _admin_quick_add_links_conv() -> ConversationHandler:
+    """Build the admin quick add links conversation handler.
+    Handles the flow when admin clicks 'Add links' button from setup request notification.
+    """
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_quick_add_links_cb, pattern=r"^admin_quick_add_links:")
+        ],
+        states={
+            QUICK_ADD_CHOOSE_MODE: [
+                CallbackQueryHandler(admin_quick_add_mode_cb, pattern=r"^quick_add_mode_(trial|subscription)$"),
+                CallbackQueryHandler(admin_quick_add_mode_cb, pattern=r"^quick_add_cancel$")
+            ],
+            QUICK_ADD_ENTER_LINKS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_quick_add_enter_links_msg),
+                CallbackQueryHandler(admin_quick_add_mode_cb, pattern=r"^quick_add_cancel$")
+            ],
+        },
+        fallbacks=[
+            CallbackQueryHandler(admin_quick_add_mode_cb, pattern=r"^quick_add_cancel$")
+        ],
+        allow_reentry=True,
+    )
 
 
 def _user_setup_conv() -> ConversationHandler:
@@ -812,6 +846,9 @@ def build_app():
     # Quick assign callbacks for new /assign_links and /reply_assign commands
     app.add_handler(CallbackQueryHandler(quick_assign_mode_cb, pattern=r"^quick_assign_(trial|subscription|cancel)$"))
     
+    # Quick add links conversation from setup request notification
+    app.add_handler(_admin_quick_add_links_conv())
+    
     # User setup request conversation - MUST come before other callback handlers that might conflict
     app.add_handler(_user_setup_conv())
     
@@ -825,10 +862,11 @@ def build_app():
 
 # ---- Admin Inline Menu Conversation ----
 # Added BROADCAST_ENTER state for admin broadcast flow and CHOOSE_USER_PAID for payment confirmation
-ADMIN_MENU, CHOOSE_USER, CHOOSE_MODE, ENTER_LINKS, CONFIRM_DELETE, BROADCAST_ENTER, CHOOSE_USER_PAID = range(7)
+# Added QUICK_ADD_CHOOSE_MODE and QUICK_ADD_ENTER_LINKS for quick link assignment from setup request
+ADMIN_MENU, CHOOSE_USER, CHOOSE_MODE, ENTER_LINKS, CONFIRM_DELETE, BROADCAST_ENTER, CHOOSE_USER_PAID, QUICK_ADD_CHOOSE_MODE, QUICK_ADD_ENTER_LINKS = range(9)
 
 # User setup request conversation states
-USER_SETUP_ASK_CITY, USER_SETUP_ASK_PRICE, USER_SETUP_ASK_ROOMS = range(7, 10)
+USER_SETUP_ASK_CITY, USER_SETUP_ASK_PRICE, USER_SETUP_ASK_ROOMS = range(9, 12)
 
 # Pagination size for admin user list
 PAGE_SIZE = 10
@@ -1831,6 +1869,217 @@ async def admin_inline_decline_cb(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(chat_id=uid, text="На жаль, вашу заявку відхилено. Зв'яжіться з адміністратором для уточнення.")
     except Exception:
         pass
+
+
+async def admin_quick_add_links_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for 'Add links' button from setup request notification.
+    Initiates a flow to add links to the user who submitted the setup request.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(str(query.from_user.id)):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    
+    # Extract user_id from callback data
+    if not query.data.startswith("admin_quick_add_links:"):
+        await query.edit_message_text("❌ Помилка: невірний формат даних.")
+        return ConversationHandler.END
+    
+    target_id = query.data.split(":", 1)[1]
+    
+    # Verify user exists
+    user_doc = um.db.users.find_one({"user_id": target_id})
+    if not user_doc:
+        await query.edit_message_text(f"❌ Користувача {target_id} не знайдено.")
+        return ConversationHandler.END
+    
+    label = user_doc.get("username") or user_doc.get("first_name") or target_id
+    
+    # Store target user in context
+    context.user_data["quick_add_target_id"] = target_id
+    context.user_data["quick_add_label"] = label
+    
+    # Ask admin to choose mode: trial or subscription
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🧪 Тест (14 днів)", callback_data="quick_add_mode_trial"),
+            InlineKeyboardButton("💳 Підписка (30 днів)", callback_data="quick_add_mode_subscription")
+        ],
+        [InlineKeyboardButton("❌ Скасувати", callback_data="quick_add_cancel")]
+    ])
+    
+    await query.edit_message_text(
+        f"📋 Призначення посилань для:\n"
+        f"👤 {label} (ID: {target_id})\n\n"
+        f"Оберіть режим доступу:",
+        reply_markup=kb
+    )
+    
+    return QUICK_ADD_CHOOSE_MODE
+
+
+async def admin_quick_add_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for mode selection in quick add links flow."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(str(query.from_user.id)):
+        await query.edit_message_text("Лише адміністратор може виконувати цю дію.")
+        return ConversationHandler.END
+    
+    data = query.data
+    
+    if data == "quick_add_cancel":
+        await query.edit_message_text("❌ Призначення скасовано.")
+        context.user_data.pop("quick_add_target_id", None)
+        context.user_data.pop("quick_add_label", None)
+        context.user_data.pop("quick_add_mode", None)
+        return ConversationHandler.END
+    
+    # Determine mode
+    if data == "quick_add_mode_trial":
+        mode = "trial"
+        mode_text = "🧪 Тест (14 днів)"
+    elif data == "quick_add_mode_subscription":
+        mode = "subscription"
+        mode_text = "💳 Підписка (30 днів)"
+    else:
+        await query.edit_message_text("❌ Невідомий режим.")
+        return ConversationHandler.END
+    
+    # Store mode in context
+    context.user_data["quick_add_mode"] = mode
+    
+    target_id = context.user_data.get("quick_add_target_id")
+    label = context.user_data.get("quick_add_label", target_id)
+    
+    # Ask admin to enter links
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="quick_add_cancel")]])
+    
+    await query.edit_message_text(
+        f"📋 Режим: {mode_text}\n"
+        f"👤 Користувач: {label}\n\n"
+        f"📎 Надішліть посилання одним повідомленням.\n"
+        f"Можна вставити кілька посилань (кожне на новому рядку або через пробіл).\n\n"
+        f"Приклад:\n"
+        f"https://www.kleinanzeigen.de/...\n"
+        f"https://www.immowelt.de/...",
+        reply_markup=kb
+    )
+    
+    return QUICK_ADD_ENTER_LINKS
+
+
+async def admin_quick_add_enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for links input in quick add links flow."""
+    uid = str(update.effective_user.id)
+    
+    if not is_admin(uid):
+        return ConversationHandler.END
+    
+    # Extract links from message
+    text = (update.message.text or "").strip()
+    
+    import re as _re
+    links = _re.findall(r"https?://\S+", text)
+    
+    if not links:
+        await update.message.reply_text(
+            "❌ Не знайдено жодного посилання.\n\n"
+            "Переконайтеся, що ви надіслали URL (https://...).\n"
+            "Спробуйте ще раз або натисніть Скасувати.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data="quick_add_cancel")]])
+        )
+        return QUICK_ADD_ENTER_LINKS
+    
+    target_id = context.user_data.get("quick_add_target_id")
+    label = context.user_data.get("quick_add_label", target_id)
+    mode = context.user_data.get("quick_add_mode")
+    
+    if not target_id or not mode:
+        await update.message.reply_text("❌ Помилка: дані не знайдено. Спробуйте ще раз.")
+        return ConversationHandler.END
+    
+    # Assign links to user
+    um.set_user_links(target_id, links, [], access_mode=mode)
+    
+    # Get user's language for localized notification
+    target_lang = um.get_user_language(target_id)
+    
+    # Activate subscription based on mode
+    from datetime import datetime as _dt
+    if mode == "trial":
+        um.mark_trial(target_id)
+        user_doc = um.db.users.find_one({"user_id": target_id}) or {}
+        sub_until = user_doc.get("subscription_expires", "—")
+        try:
+            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+        except Exception:
+            sub_until_formatted = sub_until
+        
+        links_preview = "\n".join([f"• {url}" for url in links[:5]])
+        if len(links) > 5:
+            links_preview += f"\n... та ще {len(links) - 5} посилань"
+        
+        await update.message.reply_text(
+            f"✅ Посилання призначено!\n\n"
+            f"👤 Користувач: {label} (ID: {target_id})\n"
+            f"📎 Посилань: {len(links)}\n{links_preview}\n\n"
+            f"🧪 Тестовий період активовано до: {sub_until_formatted}\n\n"
+            f"Користувач отримає повідомлення."
+        )
+        
+        # Notify user in their language
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=get_text("setup_configured", target_lang)
+            )
+        except Exception as e:
+            print(f"Failed to notify user {target_id}: {e}")
+    
+    elif mode == "subscription":
+        um.mark_paid(target_id)
+        user_doc = um.db.users.find_one({"user_id": target_id}) or {}
+        sub_until = user_doc.get("subscription_expires", "—")
+        try:
+            sub_until_formatted = _dt.fromisoformat(sub_until).strftime("%d.%m.%Y")
+        except Exception:
+            sub_until_formatted = sub_until
+        
+        links_preview = "\n".join([f"• {url}" for url in links[:5]])
+        if len(links) > 5:
+            links_preview += f"\n... та ще {len(links) - 5} посилань"
+        
+        await update.message.reply_text(
+            f"✅ Посилання призначено!\n\n"
+            f"👤 Користувач: {label} (ID: {target_id})\n"
+            f"📎 Посилань: {len(links)}\n{links_preview}\n\n"
+            f"💳 Підписка активована до: {sub_until_formatted}\n\n"
+            f"Користувач отримає повідомлення."
+        )
+        
+        # Notify user in their language
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=get_text("setup_configured", target_lang)
+            )
+        except Exception as e:
+            print(f"Failed to notify user {target_id}: {e}")
+    
+    # Trigger immediate parsing
+    if context.application:
+        context.application.create_task(async_run_for_user(target_id, ignore_window=True))
+    
+    # Clear context
+    context.user_data.pop("quick_add_target_id", None)
+    context.user_data.pop("quick_add_label", None)
+    context.user_data.pop("quick_add_mode", None)
+    
+    return ConversationHandler.END
 
 
 # ---- User menu handlers ----

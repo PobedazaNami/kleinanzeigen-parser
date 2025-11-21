@@ -676,6 +676,7 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
     # Get all setup data
     city = context.user_data.get("setup_city", "—")
     price = context.user_data.get("setup_price", "—")
+    from_menu = context.user_data.get("setup_from_menu", False)
     
     # Store setup request in database
     um.db.users.update_one(
@@ -685,7 +686,8 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
                 "city": city,
                 "price": price,
                 "rooms": rooms,
-                "requested_at": datetime.utcnow().isoformat()
+                "requested_at": datetime.utcnow().isoformat(),
+                "from_menu": from_menu
             }
         }}
     )
@@ -701,8 +703,11 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
         u = update.effective_user
         username = f"@{u.username}" if u.username else u.first_name or "—"
         
+        # Choose appropriate message based on source
+        admin_msg_key = "admin_setup_request_from_menu" if from_menu else "admin_setup_request"
+        
         admin_text = get_text(
-            "admin_setup_request",
+            admin_msg_key,
             "uk",  # Admin messages in Ukrainian
             username=username,
             user_id=uid,
@@ -732,6 +737,7 @@ async def user_setup_rooms_msg(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("setup_city", None)
     context.user_data.pop("setup_price", None)
     context.user_data.pop("setup_rooms", None)
+    context.user_data.pop("setup_from_menu", None)
     
     return ConversationHandler.END
 
@@ -750,6 +756,7 @@ async def user_setup_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("setup_city", None)
     context.user_data.pop("setup_price", None)
     context.user_data.pop("setup_rooms", None)
+    context.user_data.pop("setup_from_menu", None)
     
     # Return to menu
     welcome_text = get_text("welcome_text", user_lang)
@@ -1963,8 +1970,15 @@ async def user_add_cities_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Get user's language
         user_lang = um.get_user_language(uid)
         
-        # Start setup conversation - ask for city
+        # Show warning about overwriting parameters
         cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
+        await context.bot.send_message(
+            chat_id=uid,
+            text=get_text("setup_add_cities_warning", user_lang),
+            reply_markup=cancel_kb
+        )
+        
+        # Start setup conversation - ask for city
         await context.bot.send_message(
             chat_id=uid,
             text=get_text("setup_ask_city", user_lang),
@@ -1974,6 +1988,7 @@ async def user_add_cities_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Store language in context for conversation
         context.user_data["setup_user_lang"] = user_lang
         context.user_data["setup_user_id"] = uid
+        context.user_data["setup_from_menu"] = True  # Mark that this request is from menu
         
         return USER_SETUP_ASK_CITY
         

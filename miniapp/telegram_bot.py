@@ -156,6 +156,32 @@ def _user_menu_keyboard(uid: str | None = None):
 def _back_to_menu_keyboard(lang: str = "uk"):
     return InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", lang), callback_data="user_back_menu")]])
 
+
+async def _send_setup_complete_notification(context: ContextTypes.DEFAULT_TYPE, target_id: str, target_lang: str):
+    """Send setup completion notification and menu to user.
+    
+    Args:
+        context: Telegram context
+        target_id: User ID to send notification to
+        target_lang: User's preferred language
+    """
+    try:
+        # Send setup confirmation message
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=get_text("setup_configured", target_lang)
+        )
+        # Show updated menu with all buttons including "Add more cities" for active subscriptions
+        welcome_text = get_text("welcome_text", target_lang)
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=welcome_text,
+            reply_markup=_user_menu_keyboard(target_id)
+        )
+    except Exception as e:
+        print(f"Failed to send setup notification to user {target_id}: {e}")
+
+
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # /approve <user_id>
     caller_id = str(update.effective_user.id)
@@ -1462,42 +1488,14 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if mode == "trial":
         # Trial mode: 14 days, already set in set_user_links
         await update.message.reply_text(f"✅ Посилання оновлено для {target_id}.\n🧪 Тестовий період на 14 днів активовано.")
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception:
-            pass
+        await _send_setup_complete_notification(context, target_id, target_lang)
     elif mode == "subscription":
         # Subscription mode: start 30-day paid subscription
         um.mark_paid(target_id)
         user_doc = um.db.users.find_one({"user_id": target_id}) or {}
         sub_until = user_doc.get("subscription_expires", "—")
         await update.message.reply_text(f"✅ Посилання оновлено для {target_id}.\n💳 Підписка на 30 днів активована до: {sub_until}")
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception:
-            pass
+        await _send_setup_complete_notification(context, target_id, target_lang)
     else:
         await update.message.reply_text(f"Посилання оновлено для {target_id}.")
     
@@ -1934,21 +1932,7 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         
         # Notify user in their language
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception as e:
-            print(f"Failed to notify user {target_id}: {e}")
+        await _send_setup_complete_notification(context, target_id, target_lang)
     
     elif mode == "subscription":
         um.mark_paid(target_id)
@@ -1968,21 +1952,7 @@ async def quick_assign_mode_cb(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         
         # Notify user in their language
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception as e:
-            print(f"Failed to notify user {target_id}: {e}")
+        await _send_setup_complete_notification(context, target_id, target_lang)
     
     # Trigger immediate parsing
     if context.application:
@@ -2320,21 +2290,7 @@ async def admin_quick_add_enter_links_msg(update: Update, context: ContextTypes.
         )
         
         # Notify user in their language
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception as e:
-            print(f"Failed to notify user {target_id}: {e}")
+        await _send_setup_complete_notification(context, target_id, target_lang)
     
     elif mode == "subscription":
         um.mark_paid(target_id)
@@ -2358,21 +2314,7 @@ async def admin_quick_add_enter_links_msg(update: Update, context: ContextTypes.
         )
         
         # Notify user in their language
-        try:
-            # Send setup confirmation message
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=get_text("setup_configured", target_lang)
-            )
-            # Show updated menu with "Add more cities" button
-            welcome_text = get_text("welcome_text", target_lang)
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=welcome_text,
-                reply_markup=_user_menu_keyboard(target_id)
-            )
-        except Exception as e:
-            print(f"Failed to notify user {target_id}: {e}")
+        await _send_setup_complete_notification(context, target_id, target_lang)
     
     # Trigger immediate parsing
     if context.application:

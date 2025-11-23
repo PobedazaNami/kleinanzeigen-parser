@@ -93,9 +93,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _user_menu_keyboard(uid: str | None = None):
     """Build user menu.
 
-    - For нового юзера (без активної підписки / триалу) показуємо:
+    - For нового юзера (без активної підписки / триалу) показуємо тільки:
       * "Спробувати 14 днів БЕЗКОШТОВНО"
-      * "Додати ще міста"
       * "Техпідтримка"
       * "Змінити мову"
     - Для користувача з активним триалом або підпискою показуємо:
@@ -141,8 +140,9 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
-    # Show "Add more cities" button for all users (always visible in main menu)
-    rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
+    # Show "Add more cities" button if user has active subscription
+    if has_active_sub:
+        rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
     
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])
@@ -336,6 +336,42 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, reply_markup=_back_to_menu_keyboard())
     except Exception:
         import traceback; print("Error in /status:", traceback.format_exc())
+
+
+async def add_cities_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User command: /add_cities — start the add cities setup flow."""
+    print("/add_cities command received from", update.effective_user.id)
+    uid = str(update.effective_user.id)
+    
+    try:
+        # Get user's language
+        user_lang = um.get_user_language(uid)
+        
+        # Show warning about overwriting parameters
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text("btn_back_menu", user_lang), callback_data="user_setup_cancel")]])
+        await update.message.reply_text(
+            get_text("setup_add_cities_warning", user_lang),
+            reply_markup=cancel_kb
+        )
+        
+        # Start setup conversation - ask for city
+        await update.message.reply_text(
+            get_text("setup_ask_city", user_lang),
+            reply_markup=cancel_kb
+        )
+        
+        # Store language in context for conversation
+        context.user_data["setup_user_lang"] = user_lang
+        context.user_data["setup_user_id"] = uid
+        context.user_data["setup_from_menu"] = True  # Mark that this request is from menu
+        
+        return USER_SETUP_ASK_CITY
+        
+    except Exception as e:
+        print(f"Error starting add cities for {uid}: {e}")
+        import traceback
+        traceback.print_exc()
+        return ConversationHandler.END
 
 
 async def assign_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -576,6 +612,7 @@ async def _post_init(app: Application):
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "Почати"),
+                BotCommand("add_cities", "Додати ще міста"),
                 BotCommand("help", "Як користуватися ботом"),
                 BotCommand("support", "Техпідтримка"),
                 BotCommand("status", "Статус підписки"),
@@ -845,7 +882,8 @@ def _user_setup_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"),
-            CallbackQueryHandler(user_add_cities_cb, pattern=r"^user_add_cities$")
+            CallbackQueryHandler(user_add_cities_cb, pattern=r"^user_add_cities$"),
+            CommandHandler("add_cities", add_cities_cmd)
         ],
         states={
             USER_SETUP_ASK_CITY: [

@@ -141,7 +141,9 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
-    # Note: "Add more cities" is now available via /add_cities command, not as inline button
+    # Show "Add more cities" button for users with active subscription
+    if has_active_sub:
+        rows.append([InlineKeyboardButton(get_text("btn_add_cities", user_lang), callback_data="user_add_cities")])
     
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])
@@ -575,14 +577,12 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Delete all commands first
         await context.bot.delete_my_commands()
         
-        # Set default (non-admin) commands
+        # Set default (non-admin) commands - only 3 main commands
         await context.bot.set_my_commands(
             [
                 BotCommand("start", "Почати"),
-                BotCommand("add_cities", "Додати ще міста"),
-                BotCommand("help", "Як користуватися ботом"),
-                BotCommand("support", "Техпідтримка"),
                 BotCommand("status", "Статус підписки"),
+                BotCommand("support", "Техпідтримка"),
             ],
             scope=BotCommandScopeDefault(),
         )
@@ -614,12 +614,11 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             "✅ Команди бота оновлено!\n\n"
-            "Для користувачів:\n"
-            "• /start\n"
-            "• /add_cities\n"
-            "• /help\n"
-            "• /support\n"
-            "• /status\n\n"
+            "Для користувачів (3 команди):\n"
+            "• /start - Почати роботу\n"
+            "• /status - Статус підписки\n"
+            "• /support - Техпідтримка\n\n"
+            "Додавання міст доступне через inline-кнопку в меню бота.\n"
             "Користувачам може знадобитися перезапустити бота або натиснути '/' в чаті."
         )
     except Exception as e:
@@ -672,15 +671,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _post_init(app: Application):
-    # Set default (non-admin) commands
+    # Set default (non-admin) commands - only 3 main commands that users actually see
     try:
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "Почати"),
-                BotCommand("add_cities", "Додати ще міста"),
-                BotCommand("help", "Як користуватися ботом"),
-                BotCommand("support", "Техпідтримка"),
                 BotCommand("status", "Статус підписки"),
+                BotCommand("support", "Техпідтримка"),
             ],
             scope=BotCommandScopeDefault(),
         )
@@ -951,6 +948,7 @@ def _user_setup_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"),
+            CallbackQueryHandler(user_add_cities_cb, pattern=r"^user_add_cities$"),
             CommandHandler("add_cities", add_cities_cmd)
         ],
         states={

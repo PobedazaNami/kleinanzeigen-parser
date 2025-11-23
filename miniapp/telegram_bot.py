@@ -562,6 +562,72 @@ async def force_run_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Примусовий запуск для {target} заплановано.")
 
 
+async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: force refresh bot commands in Telegram.
+    Usage: /refresh_commands
+    """
+    caller_id = str(update.effective_user.id)
+    if not is_admin(caller_id):
+        await update.message.reply_text("Лише адміністратор може виконувати цю команду.")
+        return
+    
+    try:
+        # Delete all commands first
+        await context.bot.delete_my_commands()
+        
+        # Set default (non-admin) commands
+        await context.bot.set_my_commands(
+            [
+                BotCommand("start", "Почати"),
+                BotCommand("add_cities", "Додати ще міста"),
+                BotCommand("help", "Як користуватися ботом"),
+                BotCommand("support", "Техпідтримка"),
+                BotCommand("status", "Статус підписки"),
+            ],
+            scope=BotCommandScopeDefault(),
+        )
+        
+        # Set admin commands for each admin
+        for aid in _admin_ids:
+            await context.bot.set_my_commands(
+                [
+                    BotCommand("start", "Почати (адмін)"),
+                    BotCommand("admin", "Відкрити адмін-меню"),
+                    BotCommand("users", "Список користувачів та посилань"),
+                    BotCommand("add_link", "Швидко додати посилання користувачу"),
+                    BotCommand("assign_links", "Призначити посилання користувачу"),
+                    BotCommand("reply_assign", "Призначити посилання відповіддю на повідомлення"),
+                    BotCommand("approve", "Схвалити користувача"),
+                    BotCommand("set_location", "Призначити міста/посилання"),
+                    BotCommand("view_location", "Переглянути міста/посилання"),
+                    BotCommand("delete_user", "Видалити користувача"),
+                    BotCommand("set_links", "Задати посилання собі"),
+                    BotCommand("test_run", "Тестовий запуск парсингу"),
+                    BotCommand("broadcast", "Розсилка повідомлення всім"),
+                    BotCommand("refresh_commands", "Оновити команди бота"),
+                    BotCommand("support", "Техпідтримка"),
+                    BotCommand("status", "Статус підписки"),
+                    BotCommand("help", "Список адмін-команд"),
+                ],
+                scope=BotCommandScopeChat(int(aid)),
+            )
+        
+        await update.message.reply_text(
+            "✅ Команди бота оновлено!\n\n"
+            "Для користувачів:\n"
+            "• /start\n"
+            "• /add_cities\n"
+            "• /help\n"
+            "• /support\n"
+            "• /status\n\n"
+            "Користувачам може знадобитися перезапустити бота або натиснути '/' в чаті."
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Помилка оновлення команд: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-only: broadcast message to all users (except banned).
     Usage: /broadcast <message text>
@@ -927,6 +993,7 @@ def build_app():
     app.add_handler(CommandHandler("test_run", test_run))
     app.add_handler(CommandHandler("force_run", force_run_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("refresh_commands", refresh_commands))
     app.add_handler(CommandHandler("help", help_cmd))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured

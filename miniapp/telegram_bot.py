@@ -5,6 +5,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
     BotCommand,
     BotCommandScopeDefault,
     BotCommandScopeChat,
@@ -21,6 +22,7 @@ um = UserManager()
 # Track last sent inline menu message per user so we can edit instead of spamming new ones
 _user_menu_messages: Dict[str, Dict[str, int]] = {}
 _admin_menu_messages: Dict[str, Dict[str, int]] = {}
+_reply_kb_set: set[str] = set()  # Users who have received the persistent reply keyboard
 
 async def _ensure_user_menu(context: ContextTypes.DEFAULT_TYPE, uid: str, welcome_text: str):
     """Ensure a single persistent inline menu message exists for user; edit if already sent."""
@@ -129,9 +131,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             get_text("select_language", "uk"),
             reply_markup=_language_selection_keyboard()
         )
+        # Provide persistent reply keyboard immediately (default Ukrainian label)
+        if uid not in _reply_kb_set:
+            rk = ReplyKeyboardMarkup([["Меню"]], resize_keyboard=True)
+            try:
+                await update.message.reply_text("Натисни 'Меню' щоб відкрити панель", reply_markup=rk)
+                _reply_kb_set.add(uid)
+            except Exception:
+                pass
     else:
         # User has already selected a language, show welcome message
         await _ensure_user_menu(context, uid, get_text("welcome_text", user_lang))
+        if uid not in _reply_kb_set:
+            label = "Меню" if user_lang in ("uk", "ru") else ("القائمة" if user_lang == "ar" else "Menu")
+            rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+            try:
+                await update.message.reply_text(get_text("menu_hint", user_lang), reply_markup=rk)
+                _reply_kb_set.add(uid)
+            except Exception:
+                pass
 
 
 def _user_menu_keyboard(uid: str | None = None):
@@ -1025,6 +1043,8 @@ def build_app():
     app.add_handler(CommandHandler("refresh_commands", refresh_commands))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("push_menu", push_menu_cmd))
+    # Reply keyboard single-button 'Menu' text handler (must be before generic text consumers)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured
     # NOTE: user_subscribe_cb and user_add_cities_cb are handled by user setup conversation, so NOT registered here
@@ -2560,6 +2580,14 @@ async def user_back_menu_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = str(q.from_user.id)
         user_lang = um.get_user_language(uid)
         await _ensure_user_menu(context, uid, get_text("welcome_text", user_lang))
+        if uid not in _reply_kb_set:
+            label = "Меню" if user_lang in ("uk", "ru") else ("القائمة" if user_lang == "ar" else "Menu")
+            rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+            try:
+                await q.message.reply_text(get_text("menu_hint", user_lang), reply_markup=rk)
+                _reply_kb_set.add(uid)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -2585,6 +2613,15 @@ async def language_selection_cb(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Show welcome message in selected language
         await _ensure_user_menu(context, uid, get_text("welcome_text", lang))
+        # Ensure reply keyboard exists
+        if uid not in _reply_kb_set:
+            label = "Меню" if lang in ("uk", "ru") else ("القائمة" if lang == "ar" else "Menu")
+            rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+            try:
+                await context.bot.send_message(chat_id=uid, text=get_text("menu_hint", lang), reply_markup=rk)
+                _reply_kb_set.add(uid)
+            except Exception:
+                pass
 
 
 async def user_change_lang_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2619,6 +2656,14 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Regular user: fetch language and show welcome + dynamic menu
     user_lang = um.get_user_language(uid)
     await _ensure_user_menu(context, uid, get_text("welcome_text", user_lang))
+    if uid not in _reply_kb_set:
+        label = "Меню" if user_lang in ("uk", "ru") else ("القائمة" if user_lang == "ar" else "Menu")
+        rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+        try:
+            await update.message.reply_text(get_text("menu_hint", user_lang), reply_markup=rk)
+            _reply_kb_set.add(uid)
+        except Exception:
+            pass
 
 
 async def push_menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2642,7 +2687,36 @@ async def push_menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lang = um.get_user_language(uid)
             await _ensure_user_menu(context, uid, get_text("welcome_text", lang))
             sent += 1
+            if uid not in _reply_kb_set:
+                label = "Меню" if lang in ("uk", "ru") else ("القائمة" if lang == "ar" else "Menu")
+                rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+                try:
+                    await context.bot.send_message(chat_id=uid, text=get_text("menu_hint", lang), reply_markup=rk)
+                    _reply_kb_set.add(uid)
+                except Exception:
+                    pass
         except Exception as e:
             failed += 1
             print(f"Failed to push menu to {uid}: {e}")
     await update.message.reply_text(f"✅ Меню надіслано: {sent}\n❌ Помилок: {failed}")
+
+# Text-based menu button handler (reply keyboard single button)
+async def menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
+    if text not in ("Меню", "Menu", "القائمة"):
+        return
+    uid = str(update.effective_user.id)
+    if is_admin(uid):
+        await _ensure_admin_menu(context, uid)
+        return
+    user_lang = um.get_user_language(uid)
+    await _ensure_user_menu(context, uid, get_text("welcome_text", user_lang))
+    # Re-send reply keyboard if lost
+    if uid not in _reply_kb_set:
+        label = "Меню" if user_lang in ("uk", "ru") else ("القائمة" if user_lang == "ar" else "Menu")
+        rk = ReplyKeyboardMarkup([[label]], resize_keyboard=True)
+        try:
+            await update.message.reply_text(get_text("menu_hint", user_lang), reply_markup=rk)
+            _reply_kb_set.add(uid)
+        except Exception:
+            pass

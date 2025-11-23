@@ -618,8 +618,10 @@ async def _post_init(app: Application):
             ],
             scope=BotCommandScopeDefault(),
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error setting user commands: {e}")
+        import traceback
+        traceback.print_exc()
     # Set admin-specific commands per admin chat
     for aid in _admin_ids:
         try:
@@ -644,8 +646,10 @@ async def _post_init(app: Application):
                 ],
                 scope=BotCommandScopeChat(int(aid)),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error setting admin commands for {aid}: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

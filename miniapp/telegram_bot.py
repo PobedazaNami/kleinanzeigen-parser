@@ -8,6 +8,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     BotCommand,
     BotCommandScopeDefault,
+    BotCommandScopeAllPrivateChats,
     BotCommandScopeChat,
     LinkPreviewOptions,
 )
@@ -626,6 +627,9 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Hide default user commands completely (no visible slash menu for regular users)
         await context.bot.delete_my_commands(scope=BotCommandScopeDefault())
+        await context.bot.set_my_commands([], scope=BotCommandScopeDefault())
+        await context.bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
+        await context.bot.set_my_commands([], scope=BotCommandScopeAllPrivateChats())
         
         # Set admin commands for each admin
         for aid in _admin_ids:
@@ -653,7 +657,7 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         await update.message.reply_text(
-            "✅ Команди оновлено. Меню користувача приховано. Адмінські команди активні."
+            "✅ Команди оновлено. Меню користувача повністю приховано, адмінські команди активні."
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Помилка оновлення команд: {e}")
@@ -709,6 +713,8 @@ async def _post_init(app: Application):
     try:
         await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
         await app.bot.set_my_commands([], scope=BotCommandScopeDefault())
+        await app.bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
+        await app.bot.set_my_commands([], scope=BotCommandScopeAllPrivateChats())
     except Exception as e:
         print(f"Error clearing default user commands: {e}")
         import traceback; traceback.print_exc()

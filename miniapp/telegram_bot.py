@@ -92,6 +92,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _user_menu_keyboard(uid: str | None = None):
     """Build user menu.
+    
+    Note: "Add more cities" functionality is now available via /add_cities command in Bot Commands Menu.
 
     - For нового юзера (без активної підписки / триалу) показуємо тільки:
       * "Спробувати 14 днів БЕЗКОШТОВНО"
@@ -99,7 +101,6 @@ def _user_menu_keyboard(uid: str | None = None):
       * "Змінити мову"
     - Для користувача з активним триалом або підпискою показуємо:
       * "Дата початку підписки"
-      * "Додати ще міста"
       * "Техпідтримка"
       * "Змінити мову"
     """
@@ -140,9 +141,7 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
-    # Show "Add more cities" button if user has active subscription
-    if has_active_sub:
-        rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
+    # Note: "Add more cities" is now available via /add_cities command, not as inline button
     
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])
@@ -882,7 +881,6 @@ def _user_setup_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(user_subscribe_cb, pattern=r"^user_subscribe$"),
-            CallbackQueryHandler(user_add_cities_cb, pattern=r"^user_add_cities$"),
             CommandHandler("add_cities", add_cities_cmd)
         ],
         states={

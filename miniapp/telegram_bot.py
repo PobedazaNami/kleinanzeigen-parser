@@ -203,9 +203,8 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
-    # Show "Add more cities" button for users with active subscription
-    if has_active_sub:
-        rows.append([InlineKeyboardButton(get_text("btn_add_cities", user_lang), callback_data="user_add_cities")])
+    # Show "Add more cities" button always so user can update or submit search params
+    rows.append([InlineKeyboardButton(get_text("btn_add_cities", user_lang), callback_data="user_add_cities")])
     
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])

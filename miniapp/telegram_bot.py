@@ -160,10 +160,18 @@ def _back_to_menu_keyboard(lang: str = "uk"):
 async def _send_setup_complete_notification(context: ContextTypes.DEFAULT_TYPE, target_id: str, target_lang: str):
     """Send setup completion notification and menu to user.
     
+    Sends two messages to the user:
+    1. Setup confirmation message ("setup_configured" text)
+    2. Welcome message with interactive menu including "Add more cities" button
+    
     Args:
-        context: Telegram context
-        target_id: User ID to send notification to
-        target_lang: User's preferred language
+        context: Telegram context with bot instance
+        target_id: User ID (string) to send notification to
+        target_lang: User's preferred language code (e.g., 'uk', 'ru', 'ar')
+    
+    Note:
+        Catches and logs all exceptions to prevent notification failures from
+        affecting the main admin flow.
     """
     try:
         # Send setup confirmation message

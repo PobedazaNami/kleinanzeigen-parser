@@ -624,15 +624,8 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Delete all commands first
         await context.bot.delete_my_commands()
         
-        # Set default (non-admin) commands - only 3 main commands
-        await context.bot.set_my_commands(
-            [
-                BotCommand("start", "Почати"),
-                BotCommand("status", "Статус підписки"),
-                BotCommand("support", "Техпідтримка"),
-            ],
-            scope=BotCommandScopeDefault(),
-        )
+        # Hide default user commands completely (no visible slash menu for regular users)
+        await context.bot.delete_my_commands(scope=BotCommandScopeDefault())
         
         # Set admin commands for each admin
         for aid in _admin_ids:
@@ -660,13 +653,7 @@ async def refresh_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         await update.message.reply_text(
-            "✅ Команди бота оновлено!\n\n"
-            "Для користувачів (3 команди):\n"
-            "• /start - Почати роботу\n"
-            "• /status - Статус підписки\n"
-            "• /support - Техпідтримка\n\n"
-            "Додавання міст доступне через inline-кнопку в меню бота.\n"
-            "Користувачам може знадобитися перезапустити бота або натиснути '/' в чаті."
+            "✅ Команди оновлено. Меню користувача приховано. Адмінські команди активні."
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Помилка оновлення команд: {e}")
@@ -718,20 +705,12 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _post_init(app: Application):
-    # Set default (non-admin) commands - only 3 main commands that users actually see
+    # Remove all default user commands so regular users see no built-in slash menu
     try:
-        await app.bot.set_my_commands(
-            [
-                BotCommand("start", "Почати"),
-                BotCommand("status", "Статус підписки"),
-                BotCommand("support", "Техпідтримка"),
-            ],
-            scope=BotCommandScopeDefault(),
-        )
+        await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
     except Exception as e:
-        print(f"Error setting user commands: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error deleting default user commands: {e}")
+        import traceback; traceback.print_exc()
     # Set admin-specific commands per admin chat
     for aid in _admin_ids:
         try:

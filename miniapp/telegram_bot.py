@@ -93,8 +93,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _user_menu_keyboard(uid: str | None = None):
     """Build user menu.
 
-    - For нового юзера (без активної підписки / триалу) показуємо тільки:
+    - For нового юзера (без активної підписки / триалу) показуємо:
       * "Спробувати 14 днів БЕЗКОШТОВНО"
+      * "Додати ще міста"
       * "Техпідтримка"
       * "Змінити мову"
     - Для користувача з активним триалом або підпискою показуємо:
@@ -140,9 +141,8 @@ def _user_menu_keyboard(uid: str | None = None):
     if has_active_sub:
         rows.append([InlineKeyboardButton(get_text("btn_subscription_date", user_lang), callback_data="user_sub_info")])
     
-    # Show "Add more cities" button if user has active subscription
-    if has_active_sub:
-        rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
+    # Show "Add more cities" button for all users (always visible in main menu)
+    rows.append([InlineKeyboardButton(get_text("btn_add_more_cities", user_lang), callback_data="user_add_cities")])
     
     # Support button always visible
     rows.append([InlineKeyboardButton(get_text("btn_support", user_lang), callback_data="user_support")])

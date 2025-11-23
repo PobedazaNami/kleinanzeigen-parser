@@ -1042,8 +1042,8 @@ def build_app():
     app.add_handler(CommandHandler("refresh_commands", refresh_commands))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("push_menu", push_menu_cmd))
-    # Reply keyboard single-button 'Menu' text handler (must be before generic text consumers)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))
+    # Reply keyboard single-button 'Menu' text handler: restrict to exact button labels to avoid blocking other text flows
+    app.add_handler(MessageHandler(filters.Regex(r'^(Меню|Menu|القائمة)$'), menu_text_handler))
     
     # User menu callbacks - MUST be registered BEFORE ConversationHandler to avoid being captured
     # NOTE: user_subscribe_cb and user_add_cities_cb are handled by user setup conversation, so NOT registered here

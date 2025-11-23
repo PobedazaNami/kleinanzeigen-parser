@@ -705,11 +705,12 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _post_init(app: Application):
-    # Remove all default user commands so regular users see no built-in slash menu
+    # Fully clear default user commands (delete + set empty) to flush client cache
     try:
         await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands([], scope=BotCommandScopeDefault())
     except Exception as e:
-        print(f"Error deleting default user commands: {e}")
+        print(f"Error clearing default user commands: {e}")
         import traceback; traceback.print_exc()
     # Set admin-specific commands per admin chat
     for aid in _admin_ids:

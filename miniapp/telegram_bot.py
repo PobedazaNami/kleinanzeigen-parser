@@ -1704,7 +1704,23 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop("broadcast_target", None)
         return ConversationHandler.END
     
-    await update.message.reply_text(f"Починаю розсилку {target_description}: {len(users)} користувачів...")
+    # Describe what type of content is being sent
+    content_type = "текст"
+    if has_video:
+        content_type = "відео"
+    elif has_photo:
+        content_type = "фото"
+    elif has_document:
+        content_type = "документ"
+    elif has_animation:
+        content_type = "GIF"
+    if caption:
+        content_type += " з підписом"
+    
+    await update.message.reply_text(
+        f"📤 Починаю розсилку {target_description}: {len(users)} користувачів...\n"
+        f"📋 Тип контенту: {content_type}"
+    )
     success_count = 0
     fail_count = 0
     
@@ -1718,40 +1734,37 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_video(
                     chat_id=user_id,
                     video=msg.video.file_id,
-                    caption=caption,
-                    parse_mode=msg.parse_mode
+                    caption=caption
                 )
             elif has_photo:
                 await context.bot.send_photo(
                     chat_id=user_id,
                     photo=msg.photo[-1].file_id,  # Largest photo
-                    caption=caption,
-                    parse_mode=msg.parse_mode
+                    caption=caption
                 )
             elif has_document:
                 await context.bot.send_document(
                     chat_id=user_id,
                     document=msg.document.file_id,
-                    caption=caption,
-                    parse_mode=msg.parse_mode
+                    caption=caption
                 )
             elif has_animation:
                 await context.bot.send_animation(
                     chat_id=user_id,
                     animation=msg.animation.file_id,
-                    caption=caption,
-                    parse_mode=msg.parse_mode
+                    caption=caption
                 )
             elif message_text:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=message_text,
-                    parse_mode=msg.parse_mode
+                    text=message_text
                 )
             success_count += 1
         except Exception as e:
             fail_count += 1
-            print(f"Failed to send to {user_id}: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Failed to send broadcast to {user_id}: {e}\n{error_details}")
     
     await update.message.reply_text(
         f"✅ Розсилка завершена!\n"

@@ -1679,10 +1679,11 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Determine message type and content
     message_text = (msg.text or "").strip() if msg.text else None
     caption = (msg.caption or "").strip() if msg.caption else None
+    # Telegram treats MP4 as animation, so check animation first
+    has_animation = msg.animation is not None
     has_video = msg.video is not None
     has_photo = msg.photo is not None and len(msg.photo) > 0
     has_document = msg.document is not None
-    has_animation = msg.animation is not None
     
     # Validate that there's some content
     if not message_text and not caption and not has_video and not has_photo and not has_document and not has_animation:
@@ -1706,14 +1707,14 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Describe what type of content is being sent
     content_type = "текст"
-    if has_video:
+    if has_animation:
+        content_type = "відео (MP4)"
+    elif has_video:
         content_type = "відео"
     elif has_photo:
         content_type = "фото"
     elif has_document:
         content_type = "документ"
-    elif has_animation:
-        content_type = "GIF"
     if caption:
         content_type += " з підписом"
     
@@ -1730,11 +1731,20 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
             continue
         try:
             # Forward the complete message (preserves text, media, formatting)
-            if has_video:
+            if has_animation:
+                # Send MP4 as video with streaming support, not as GIF
+                await context.bot.send_video(
+                    chat_id=user_id,
+                    video=msg.animation.file_id,
+                    caption=caption,
+                    supports_streaming=True
+                )
+            elif has_video:
                 await context.bot.send_video(
                     chat_id=user_id,
                     video=msg.video.file_id,
-                    caption=caption
+                    caption=caption,
+                    supports_streaming=True
                 )
             elif has_photo:
                 await context.bot.send_photo(
@@ -1746,12 +1756,6 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_document(
                     chat_id=user_id,
                     document=msg.document.file_id,
-                    caption=caption
-                )
-            elif has_animation:
-                await context.bot.send_animation(
-                    chat_id=user_id,
-                    animation=msg.animation.file_id,
                     caption=caption
                 )
             elif message_text:

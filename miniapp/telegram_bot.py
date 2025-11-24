@@ -1669,13 +1669,24 @@ async def enter_links_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the message text input for admin broadcast flow."""
+    """Handles the message input (text, video, photo, etc.) for admin broadcast flow."""
     uid = str(update.effective_user.id)
     if not is_admin(uid):
         return ConversationHandler.END
-    message_text = (update.message.text or "").strip()
-    if not message_text:
-        await update.message.reply_text("Текст порожній. Спробуйте ще раз або натисніть Скасувати.")
+    
+    msg = update.message
+    
+    # Determine message type and content
+    message_text = (msg.text or "").strip() if msg.text else None
+    caption = (msg.caption or "").strip() if msg.caption else None
+    has_video = msg.video is not None
+    has_photo = msg.photo is not None and len(msg.photo) > 0
+    has_document = msg.document is not None
+    has_animation = msg.animation is not None
+    
+    # Validate that there's some content
+    if not message_text and not caption and not has_video and not has_photo and not has_document and not has_animation:
+        await update.message.reply_text("❌ Порожнє повідомлення. Надішліть текст, відео, фото або інший медіа-файл.")
         return BROADCAST_ENTER
     
     # Check if we're broadcasting to a specific target group
@@ -1696,12 +1707,47 @@ async def broadcast_enter_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"Починаю розсилку {target_description}: {len(users)} користувачів...")
     success_count = 0
     fail_count = 0
+    
     for user in users:
         user_id = user.get("user_id")
         if not user_id:
             continue
         try:
-            await context.bot.send_message(chat_id=user_id, text=message_text)
+            # Forward the complete message (preserves text, media, formatting)
+            if has_video:
+                await context.bot.send_video(
+                    chat_id=user_id,
+                    video=msg.video.file_id,
+                    caption=caption,
+                    parse_mode=msg.parse_mode
+                )
+            elif has_photo:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=msg.photo[-1].file_id,  # Largest photo
+                    caption=caption,
+                    parse_mode=msg.parse_mode
+                )
+            elif has_document:
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=msg.document.file_id,
+                    caption=caption,
+                    parse_mode=msg.parse_mode
+                )
+            elif has_animation:
+                await context.bot.send_animation(
+                    chat_id=user_id,
+                    animation=msg.animation.file_id,
+                    caption=caption,
+                    parse_mode=msg.parse_mode
+                )
+            elif message_text:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode=msg.parse_mode
+                )
             success_count += 1
         except Exception as e:
             fail_count += 1
@@ -1801,7 +1847,7 @@ def _admin_menu_conv() -> ConversationHandler:
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$")
             ],
             BROADCAST_ENTER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_enter_msg),
+                MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL | filters.ANIMATION) & ~filters.COMMAND, broadcast_enter_msg),
                 CallbackQueryHandler(cancel_cb, pattern=r"^admin_cancel$")
             ],
             CHOOSE_USER_PAID: [

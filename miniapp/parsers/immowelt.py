@@ -38,8 +38,7 @@ class ImmoweltParser(BaseParser):
                     url,
                     formats=['rawHtml'],
                     only_main_content=False,
-                    wait_for=3000,
-                    location={'country': 'DE', 'languages': ['de']}
+                    wait_for=5000,
                 )
                 # New SDK returns Document object with raw_html attribute
                 html = getattr(result, 'raw_html', None) or getattr(result, 'html', '')
